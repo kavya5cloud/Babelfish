@@ -1,5 +1,6 @@
 pub mod checksum;
 pub mod input;
+pub mod framing;
 
 pub use checksum::{
     Checksum,

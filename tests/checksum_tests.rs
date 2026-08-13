@@ -852,3 +852,126 @@ fn coverage_search_never_returns_empty_range() {
 
     assert!(coverage_start < checksum_start);
 }
+
+#[test]
+fn finds_recurring_sync_prefix() {
+    let stream = vec![
+        0x7E, 0x04, 0x01, 0x2C, 0x00, 0x5A, 0x3F,
+        0x7E, 0x04, 0x01, 0x2E, 0x00, 0x5A, 0x41,
+        0x7E, 0x04, 0x01, 0x2F, 0x00, 0x59, 0x42,
+    ];
+
+    let candidates =
+        babelfish::framing::find_recurring_prefixes(
+            &stream,
+            1,
+            3,
+        );
+
+    assert!(candidates.contains(&vec![0x7E]));
+    assert!(candidates.contains(&vec![0x7E, 0x04]));
+    assert!(candidates.contains(&vec![0x7E, 0x04, 0x01]));
+}
+#[test]
+fn splits_stream_on_sync_prefix() {
+    let stream = vec![
+        0x7E, 0x04, 0x01, 0x2C, 0x00, 0x5A, 0x3F,
+        0x7E, 0x04, 0x01, 0x2E, 0x00, 0x5A, 0x41,
+        0x7E, 0x04, 0x01, 0x2F, 0x00, 0x59, 0x42,
+    ];
+
+    let frames =
+        babelfish::framing::split_on_prefix(
+            &stream,
+            &[0x7E],
+        );
+
+    assert_eq!(frames.len(), 3);
+
+    assert_eq!(
+        frames[0],
+        vec![0x7E, 0x04, 0x01, 0x2C, 0x00, 0x5A, 0x3F]
+    );
+
+    assert_eq!(
+        frames[1],
+        vec![0x7E, 0x04, 0x01, 0x2E, 0x00, 0x5A, 0x41]
+    );
+
+    assert_eq!(
+        frames[2],
+        vec![0x7E, 0x04, 0x01, 0x2F, 0x00, 0x59, 0x42]
+    );
+}
+
+#[test]
+fn frames_raw_stream_then_identifies_checksum() {
+    let crc = Crc8;
+
+    let mut stream = Vec::new();
+
+    for i in 0u8..100 {
+        let mut data = vec![
+            0x10,
+            i,
+            i.wrapping_mul(2) % 0x7E,
+        ];
+
+        let mut checksum = crc.calculate(&data) as u8;
+
+        // Make sure neither payload nor checksum accidentally
+        // contains the sync byte used for framing.
+        if checksum == 0x7E {
+            data[2] = data[2].wrapping_add(1);
+            checksum = crc.calculate(&data) as u8;
+        }
+
+        assert!(!data.contains(&0x7E));
+        assert_ne!(checksum, 0x7E);
+
+        let mut frame = vec![0x7E];
+        frame.extend_from_slice(&data);
+        frame.push(checksum);
+
+        stream.extend_from_slice(&frame);
+    }
+
+    let frames =
+        babelfish::framing::split_on_prefix(
+            &stream,
+            &[0x7E],
+        );
+
+    assert_eq!(frames.len(), 100);
+
+    let best =
+        babelfish::checksum::search::best_candidate(&frames)
+            .expect("checksum candidate should exist");
+
+    assert_eq!(best.algorithm.name(), "CRC8");
+    assert_eq!(best.validation_count, 100);
+    assert!(best.is_proven());
+}
+
+#[test]
+fn builds_framing_candidates_from_raw_stream() {
+    let stream = vec![
+        0x7E, 0x04, 0x01, 0x2C, 0x00, 0x5A, 0x3F,
+        0x7E, 0x04, 0x01, 0x2E, 0x00, 0x5A, 0x41,
+        0x7E, 0x04, 0x01, 0x2F, 0x00, 0x59, 0x42,
+    ];
+
+    let candidates =
+        babelfish::framing::build_framing_candidates(
+            &stream,
+            1,
+            1,
+        );
+
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.prefix == vec![0x7E])
+        .expect("0x7E framing candidate should exist");
+
+    assert_eq!(candidate.frame_count, 3);
+}
