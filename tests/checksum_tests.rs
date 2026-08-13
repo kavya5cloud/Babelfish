@@ -787,3 +787,34 @@ fn reports_failed_frame_indexes() {
 
     assert_eq!(failed, vec![2, 5, 8]);
 }
+
+#[test]
+fn finds_best_checksum_coverage_start() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            i,
+            i.wrapping_mul(5),
+            i.wrapping_add(7),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = vec![0xAA];
+        frame.extend_from_slice(&data);
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let result =
+        babelfish::checksum::search::best_coverage_candidate(
+            &crc,
+            &frames,
+        )
+        .expect("a coverage candidate should exist");
+
+    assert_eq!(result, (1, 100));
+}

@@ -230,6 +230,39 @@ pub fn coverage_candidates(
         .collect()
 }
 
+pub fn best_coverage_candidate(
+    algorithm: &dyn Checksum,
+    frames: &[Vec<u8>],
+) -> Option<(usize, usize)> {
+    if frames.is_empty() {
+        return None;
+    }
+
+    let checksum_width = algorithm.width();
+
+    let max_coverage_start = frames
+        .iter()
+        .filter_map(|frame| {
+            if frame.len() < checksum_width {
+                None
+            } else {
+                Some(frame.len() - checksum_width)
+            }
+        })
+        .min()?;
+
+    (0..=max_coverage_start)
+        .map(|coverage_start| {
+            let validation_count = count_valid_frames(
+                algorithm,
+                frames,
+                coverage_start,
+            );
+
+            (coverage_start, validation_count)
+        })
+        .max_by(|a, b| a.1.cmp(&b.1))
+}
 pub fn validate_frame_at_end(
     algorithm: &dyn Checksum,
     frame: &[u8],
