@@ -39,18 +39,17 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
 pub fn count_valid_frames(
     algorithm: &dyn Checksum,
     frames: &[Vec<u8>],
-    checksum_offset: usize,
+    coverage_start: usize,
 ) -> usize {
     frames
         .iter()
         .filter(|frame| {
-    validate_frame(
-        algorithm,
-        frame,
-        0,
-        checksum_offset,
-    )
-})
+            validate_frame_at_end(
+                algorithm,
+                frame,
+                coverage_start,
+            )
+        })
         .count()
 }
 pub fn find_checksum_position(
@@ -91,33 +90,38 @@ pub fn default_algorithms() -> Vec<Box<dyn Checksum>> {
 pub fn search_algorithms(
     frames: &[Vec<u8>],
 ) -> Vec<ChecksumCandidate> {
-    let algorithms = default_algorithms();
+    if frames.is_empty() {
+        return Vec::new();
+    }
 
-    algorithms
+    default_algorithms()
         .into_iter()
         .filter_map(|algorithm| {
-            let checksum_width = algorithm.width();
+            let coverage_start = 0;
 
-            if frames.is_empty() {
-                return None;
-            }
-
-            let checksum_offset = frames
+            let checksum_offsets = frames
                 .iter()
-                .map(|frame| frame.len())
-                .min()?
-                .checked_sub(checksum_width)?;
+                .map(|frame| {
+                    let width = algorithm.width();
+
+                    if frame.len() < width {
+                        None
+                    } else {
+                        Some(frame.len() - width)
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?;
 
             let validation_count = count_valid_frames(
                 algorithm.as_ref(),
                 frames,
-                checksum_offset,
+                coverage_start,
             );
 
             Some(ChecksumCandidate {
                 algorithm,
-                coverage_start: 0,
-                checksum_offset,
+                coverage_start,
+                checksum_offsets,
                 validation_count,
                 total_frames: frames.len(),
             })
@@ -178,4 +182,25 @@ pub fn coverage_candidates(
             })
         })
         .collect()
+}
+
+pub fn validate_frame_at_end(
+    algorithm: &dyn Checksum,
+    frame: &[u8],
+    coverage_start: usize,
+) -> bool {
+    let checksum_width = algorithm.width();
+
+    if frame.len() < checksum_width {
+        return false;
+    }
+
+    let checksum_offset = frame.len() - checksum_width;
+
+    validate_frame(
+        algorithm,
+        frame,
+        coverage_start,
+        checksum_offset,
+    )
 }

@@ -13,7 +13,7 @@ pub struct ChecksumCandidate {
     pub algorithm: Box<dyn Checksum>,
 
     /// First byte containing the checksum.
-    pub checksum_offset: usize,
+    pub checksum_offsets: Vec<usize>,
 
     /// First byte included in checksum calculation.
     pub coverage_start: usize,
