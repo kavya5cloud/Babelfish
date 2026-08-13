@@ -1,3 +1,3 @@
 pub mod checksum;
 
-pub use checksum::{Checksum, Crc16Modbus};
+pub use checksum::{Checksum, Crc16Modbus, Crc8};

@@ -1,6 +1,6 @@
 mod common;
 
-use babelfish::{Checksum, Crc16Modbus};
+use babelfish::{Checksum, Crc16Modbus, Crc8};
 
 #[test]
 fn crc16_modbus_known_value() {
@@ -9,6 +9,14 @@ fn crc16_modbus_known_value() {
     let result = crc.calculate(b"123456789");
 
     assert_eq!(result, 0x4B37);
+}
+#[test]
+fn crc8_known_value() {
+    let crc = Crc8;
+
+    let result = crc.calculate(b"123456789");
+
+    assert_eq!(result, 0xF4);
 }
 
 #[test]
@@ -269,4 +277,80 @@ fn validates_variable_length_frames() {
         );
 
     assert_eq!(valid_count, 3);
+}
+
+#[test]
+fn identifies_crc8_from_unknown_frames() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_mul(5),
+            i.wrapping_add(7),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(
+            &frames,
+        );
+
+    let crc8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(crc8_candidate.validation_count, 100);
+    assert_eq!(crc8_candidate.total_frames, 100);
+
+    let crc16_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC16/MODBUS"
+        })
+        .expect("CRC16/MODBUS candidate should exist");
+
+    assert!(crc16_candidate.validation_count < 100);
+}
+
+#[test]
+fn discovers_crc8_coverage_after_header() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            i,
+            i.wrapping_mul(5),
+            i.wrapping_add(7),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = vec![0xAA];
+        frame.extend_from_slice(&data);
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let positions =
+        babelfish::checksum::search::coverage_candidates(
+            &crc,
+            &frames,
+        );
+
+    assert_eq!(positions, vec![1]);
 }

@@ -84,6 +84,7 @@ pub fn find_checksum_position(
 pub fn default_algorithms() -> Vec<Box<dyn Checksum>> {
     vec![
         Box::new(super::Crc16Modbus),
+        Box::new(super::Crc8),
         Box::new(super::XorChecksum),
     ]
 }
