@@ -11,17 +11,9 @@ pub trait Checksum {
 
 pub struct ChecksumCandidate {
     pub algorithm: Box<dyn Checksum>,
-
-    /// First byte containing the checksum.
-    pub checksum_offsets: Vec<usize>,
-
-    /// First byte included in checksum calculation.
     pub coverage_start: usize,
-
-    /// Number of frames that validated.
+    pub checksum_offsets: Vec<usize>,
     pub validation_count: usize,
-
-    /// Total number of frames tested.
     pub total_frames: usize,
 }
 
@@ -35,21 +27,34 @@ impl ChecksumCandidate {
     }
 
     pub fn confidence(&self) -> f64 {
-    if self.total_frames == 0 {
-        return 0.0;
+        if self.total_frames == 0 {
+            return 0.0;
+        }
+
+        let validation_rate = self.validation_rate();
+
+        let evidence_factor =
+            1.0 - (-((self.total_frames as f64) / 20.0)).exp();
+
+        validation_rate * evidence_factor
     }
-
-    let validation_rate = self.validation_rate();
-
-    // Evidence increases with the number of observed frames.
-    let evidence_factor =
-        1.0 - (-((self.total_frames as f64) / 20.0)).exp();
-
-    validation_rate * evidence_factor
-}
 
     pub fn is_proven(&self) -> bool {
         self.validation_count == self.total_frames
+    }
+
+    pub fn verdict(&self) -> &'static str {
+        let confidence = self.confidence();
+
+        if self.is_proven() && self.total_frames >= 100 {
+            "PROVEN"
+        } else if confidence >= 0.70 {
+            "LIKELY"
+        } else if confidence >= 0.20 {
+            "WEAK"
+        } else {
+            "REJECTED"
+        }
     }
 }
 

@@ -1,6 +1,12 @@
 mod common;
 
-use babelfish::{Checksum, Crc16Modbus, Crc8};
+use babelfish::{
+    Checksum,
+    Crc16Modbus,
+    Crc8,
+    Sum8,
+    Sum16,
+};
 
 #[test]
 fn crc16_modbus_known_value() {
@@ -9,6 +15,22 @@ fn crc16_modbus_known_value() {
     let result = crc.calculate(b"123456789");
 
     assert_eq!(result, 0x4B37);
+}
+#[test]
+fn sum16_known_value() {
+    let sum = Sum16;
+
+    let result = sum.calculate(&[0x01, 0x02, 0x03, 0x04]);
+
+    assert_eq!(result, 0x000A);
+}
+#[test]
+fn sum8_known_value() {
+    let sum = Sum8;
+
+    let result = sum.calculate(&[0x01, 0x02, 0x03, 0x04]);
+
+    assert_eq!(result, 0x0A);
 }
 
 #[test]
@@ -467,4 +489,265 @@ fn confidence_increases_with_more_valid_frames() {
     assert_eq!(many.validation_rate(), 1.0);
 
     assert!(many.confidence() > few.confidence());
+}
+#[test]
+fn confidence_drops_when_frames_fail_validation() {
+    let crc = Crc8;
+
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_add(1),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    // Corrupt 50 of the 100 frames.
+    for frame in frames.iter_mut().take(50) {
+        let last = frame.len() - 1;
+        frame[last] ^= 0xFF;
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(&frames);
+
+    let crc8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(crc8_candidate.validation_count, 50);
+    assert_eq!(crc8_candidate.total_frames, 100);
+
+    assert_eq!(crc8_candidate.validation_rate(), 0.5);
+
+    assert!(crc8_candidate.confidence() < 0.5);
+}
+
+#[test]
+fn candidate_verdicts_are_correct() {
+    let crc = Crc8;
+
+    // Build 100 valid CRC8 frames.
+    let mut valid_frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_add(1),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        valid_frames.push(frame);
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(
+            &valid_frames,
+        );
+
+    let proven = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(proven.verdict(), "PROVEN");
+}
+
+#[test]
+fn candidate_verdict_rejects_low_confidence() {
+    let crc = Crc8;
+
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_add(1),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    // Corrupt every frame.
+    for frame in &mut frames {
+        let last = frame.len() - 1;
+        frame[last] ^= 0xFF;
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(
+            &frames,
+        );
+
+    let crc8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(crc8_candidate.validation_count, 0);
+    assert_eq!(crc8_candidate.verdict(), "REJECTED");
+}
+#[test]
+fn identifies_sum8_from_unknown_frames() {
+    let sum = Sum8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x20,
+            i,
+            i.wrapping_mul(7),
+            i.wrapping_add(3),
+        ];
+
+        let checksum = sum.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(
+            &frames,
+        );
+
+    let sum8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "SUM8"
+        })
+        .expect("SUM8 candidate should exist");
+
+    assert_eq!(sum8_candidate.validation_count, 100);
+    assert_eq!(sum8_candidate.total_frames, 100);
+    assert!(sum8_candidate.is_proven());
+
+    let crc8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert!(crc8_candidate.validation_count < 100);
+}
+
+#[test]
+fn identifies_sum16_from_unknown_frames() {
+    let sum = Sum16;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x20,
+            i,
+            i.wrapping_mul(7),
+            i.wrapping_add(3),
+        ];
+
+        let checksum = sum.calculate(&data);
+
+        let mut frame = data;
+        frame.extend_from_slice(
+            &(checksum as u16).to_le_bytes(),
+        );
+
+        frames.push(frame);
+    }
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(
+            &frames,
+        );
+
+    let sum16_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "SUM16"
+        })
+        .expect("SUM16 candidate should exist");
+
+    assert_eq!(sum16_candidate.validation_count, 100);
+    assert_eq!(sum16_candidate.total_frames, 100);
+    assert!(sum16_candidate.is_proven());
+
+    let crc16_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC16/MODBUS"
+        })
+        .expect("CRC16/MODBUS candidate should exist");
+
+    assert!(crc16_candidate.validation_count < 100);
+}
+
+#[test]
+fn parses_hex_capture_file() {
+    use std::fs;
+
+    let path = std::env::temp_dir()
+        .join("babelfish_test_capture.txt");
+
+    let content = "\
+01 02 03 04 A1 2B
+10 20 30 40 00 00
+
+# This is a comment
+AA BB CC
+";
+
+    fs::write(&path, content)
+        .expect("failed to write test capture");
+
+    let frames =
+        babelfish::input::parse_hex_file(&path)
+            .expect("capture should parse");
+
+    assert_eq!(frames.len(), 3);
+
+    assert_eq!(
+        frames[0],
+        vec![0x01, 0x02, 0x03, 0x04, 0xA1, 0x2B]
+    );
+
+    assert_eq!(
+        frames[1],
+        vec![0x10, 0x20, 0x30, 0x40, 0x00, 0x00]
+    );
+
+    assert_eq!(
+        frames[2],
+        vec![0xAA, 0xBB, 0xCC]
+    );
+
+    fs::remove_file(path).ok();
 }

@@ -86,6 +86,8 @@ pub fn default_algorithms() -> Vec<Box<dyn Checksum>> {
         Box::new(super::Crc16Modbus),
         Box::new(super::Crc8),
         Box::new(super::XorChecksum),
+        Box::new(super::Sum8),
+        Box::new(super::Sum16),
     ]
 }
 pub fn search_algorithms(
