@@ -385,3 +385,26 @@ fn selects_crc8_over_other_algorithms() {
     assert_eq!(best.total_frames, 100);
     assert!(best.is_proven());
 }
+
+#[test]
+fn calculates_candidate_confidence() {
+    let crc = Crc8;
+
+    let frames = vec![
+        vec![0x01, 0x02, 0x03],
+        vec![0x04, 0x05, 0x06],
+    ];
+
+    let candidates =
+        babelfish::checksum::search::search_algorithms(&frames);
+
+    let crc8_candidate = candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(crc8_candidate.validation_rate(), 0.0);
+    assert_eq!(crc8_candidate.confidence(), 0.0);
+}

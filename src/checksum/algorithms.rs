@@ -34,6 +34,10 @@ impl ChecksumCandidate {
         self.validation_count as f64 / self.total_frames as f64
     }
 
+    pub fn confidence(&self) -> f64 {
+        self.validation_rate()
+    }
+
     pub fn is_proven(&self) -> bool {
         self.validation_count == self.total_frames
     }
