@@ -35,13 +35,24 @@ impl ChecksumCandidate {
     }
 
     pub fn confidence(&self) -> f64 {
-        self.validation_rate()
+    if self.total_frames == 0 {
+        return 0.0;
     }
+
+    let validation_rate = self.validation_rate();
+
+    // Evidence increases with the number of observed frames.
+    let evidence_factor =
+        1.0 - (-((self.total_frames as f64) / 20.0)).exp();
+
+    validation_rate * evidence_factor
+}
 
     pub fn is_proven(&self) -> bool {
         self.validation_count == self.total_frames
     }
 }
+
 pub struct XorChecksum;
 
 impl Checksum for XorChecksum {

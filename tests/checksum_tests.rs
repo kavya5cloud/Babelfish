@@ -10,6 +10,7 @@ fn crc16_modbus_known_value() {
 
     assert_eq!(result, 0x4B37);
 }
+
 #[test]
 fn crc8_known_value() {
     let crc = Crc8;
@@ -388,8 +389,6 @@ fn selects_crc8_over_other_algorithms() {
 
 #[test]
 fn calculates_candidate_confidence() {
-    let crc = Crc8;
-
     let frames = vec![
         vec![0x01, 0x02, 0x03],
         vec![0x04, 0x05, 0x06],
@@ -407,4 +406,65 @@ fn calculates_candidate_confidence() {
 
     assert_eq!(crc8_candidate.validation_rate(), 0.0);
     assert_eq!(crc8_candidate.confidence(), 0.0);
+}
+
+#[test]
+fn confidence_increases_with_more_valid_frames() {
+    let mut few_frames = Vec::new();
+
+    for i in 0u8..5 {
+        let data = vec![0x10, i, i.wrapping_add(1)];
+        let crc = Crc8;
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        few_frames.push(frame);
+    }
+
+    let mut many_frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![0x10, i, i.wrapping_add(1)];
+        let crc = Crc8;
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        many_frames.push(frame);
+    }
+
+    let few_candidates =
+        babelfish::checksum::search::search_algorithms(
+            &few_frames,
+        );
+
+    let many_candidates =
+        babelfish::checksum::search::search_algorithms(
+            &many_frames,
+        );
+
+    let few = few_candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    let many = many_candidates
+        .iter()
+        .find(|candidate| {
+            candidate.algorithm.name() == "CRC8"
+        })
+        .expect("CRC8 candidate should exist");
+
+    assert_eq!(few.validation_count, 5);
+    assert_eq!(many.validation_count, 100);
+
+    assert_eq!(few.validation_rate(), 1.0);
+    assert_eq!(many.validation_rate(), 1.0);
+
+    assert!(many.confidence() > few.confidence());
 }
