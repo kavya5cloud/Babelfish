@@ -36,13 +36,32 @@ fn main() {
 
     for candidate in &candidates {
         println!(
-            "  {:<14} {:>4}/{:<4} {:>7.2}% {:>9}",
+            "  {:<14} {:>4}/{:<4} {:>7.2}% {:>9}  failed: {}",
             candidate.algorithm.name(),
             candidate.validation_count,
             candidate.total_frames,
             candidate.validation_rate() * 100.0,
             candidate.verdict(),
-        );
+            candidate.failed_frames.len(),
+    );
+    if !candidate.is_proven() && !candidate.failed_frames.is_empty() {
+    let preview: Vec<String> = candidate
+        .failed_frames
+        .iter()
+        .take(10)
+        .map(|index| index.to_string())
+        .collect();
+
+    println!(
+        "    failed indexes: [{}{}]",
+        preview.join(", "),
+        if candidate.failed_frames.len() > 10 {
+            ", ..."
+        } else {
+            ""
+        }
+    );
+}
     }
 
     println!();

@@ -15,6 +15,7 @@ pub struct ChecksumCandidate {
     pub checksum_offsets: Vec<usize>,
     pub validation_count: usize,
     pub total_frames: usize,
+    pub failed_frames: Vec<usize>,
 }
 
 impl ChecksumCandidate {

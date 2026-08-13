@@ -751,3 +751,39 @@ AA BB CC
 
     fs::remove_file(path).ok();
 }
+
+#[test]
+fn reports_failed_frame_indexes() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..10 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_add(1),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    // Corrupt frames 2, 5, and 8.
+    for index in [2usize, 5usize, 8usize] {
+        let last = frames[index].len() - 1;
+        frames[index][last] ^= 0xFF;
+    }
+
+    let failed =
+        babelfish::checksum::search::failed_frame_indexes(
+            &crc,
+            &frames,
+            0,
+        );
+
+    assert_eq!(failed, vec![2, 5, 8]);
+}

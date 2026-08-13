@@ -52,6 +52,29 @@ pub fn count_valid_frames(
         })
         .count()
 }
+
+pub fn failed_frame_indexes(
+    algorithm: &dyn Checksum,
+    frames: &[Vec<u8>],
+    coverage_start: usize,
+) -> Vec<usize> {
+    frames
+        .iter()
+        .enumerate()
+        .filter_map(|(index, frame)| {
+            if validate_frame_at_end(
+                algorithm,
+                frame,
+                coverage_start,
+            ) {
+                None
+            } else {
+                Some(index)
+            }
+        })
+        .collect()
+}
+
 pub fn find_checksum_position(
     algorithm: &dyn Checksum,
     frames: &[Vec<u8>],
@@ -74,9 +97,14 @@ pub fn find_checksum_position(
         })
         .into_iter()
         .filter(|&offset| {
-            frames
-                .iter()
-                .all(|frame| validate_frame(algorithm, frame, 0, offset))
+            frames.iter().all(|frame| {
+                validate_frame(
+                    algorithm,
+                    frame,
+                    0,
+                    offset,
+                )
+            })
         })
         .collect()
 }
@@ -90,6 +118,7 @@ pub fn default_algorithms() -> Vec<Box<dyn Checksum>> {
         Box::new(super::Sum16),
     ]
 }
+
 pub fn search_algorithms(
     frames: &[Vec<u8>],
 ) -> Vec<ChecksumCandidate> {
@@ -121,16 +150,24 @@ pub fn search_algorithms(
                 coverage_start,
             );
 
+            let failed_frames = failed_frame_indexes(
+                algorithm.as_ref(),
+                frames,
+                coverage_start,
+            );
+
             Some(ChecksumCandidate {
                 algorithm,
                 coverage_start,
                 checksum_offsets,
                 validation_count,
                 total_frames: frames.len(),
+                failed_frames,
             })
         })
         .collect()
 }
+
 pub fn rank_candidates(
     mut candidates: Vec<ChecksumCandidate>,
 ) -> Vec<ChecksumCandidate> {
@@ -165,11 +202,17 @@ pub fn coverage_candidates(
 
     let checksum_width = algorithm.width();
 
-    let Some(min_len) = frames.iter().map(|frame| frame.len()).min() else {
+    let Some(min_len) = frames
+        .iter()
+        .map(|frame| frame.len())
+        .min()
+    else {
         return Vec::new();
     };
 
-    let Some(checksum_offset) = min_len.checked_sub(checksum_width) else {
+    let Some(checksum_offset) =
+        min_len.checked_sub(checksum_width)
+    else {
         return Vec::new();
     };
 
@@ -198,7 +241,8 @@ pub fn validate_frame_at_end(
         return false;
     }
 
-    let checksum_offset = frame.len() - checksum_width;
+    let checksum_offset =
+        frame.len() - checksum_width;
 
     validate_frame(
         algorithm,
