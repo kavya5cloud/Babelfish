@@ -35,15 +35,19 @@ fn main() {
     println!("Candidates:");
 
     for candidate in &candidates {
-        println!(
-            "  {:<14} {:>4}/{:<4} {:>7.2}% {:>9}  failed: {}",
+       println!(
+            "  {:<14} {:>4}/{:<4} {:>7.2}% {:>9}  coverage: bytes[{}..{}]  checksum: bytes[{}..{}]  failed: {}",
             candidate.algorithm.name(),
             candidate.validation_count,
             candidate.total_frames,
             candidate.validation_rate() * 100.0,
             candidate.verdict(),
+            candidate.coverage_start,
+            candidate.coverage_end,
+            candidate.checksum_start,
+            candidate.checksum_end,
             candidate.failed_frames.len(),
-    );
+       );
     if !candidate.is_proven() && !candidate.failed_frames.is_empty() {
     let preview: Vec<String> = candidate
         .failed_frames

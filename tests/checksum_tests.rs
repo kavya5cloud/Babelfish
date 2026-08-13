@@ -818,3 +818,37 @@ fn finds_best_checksum_coverage_start() {
 
     assert_eq!(result, (1, 100));
 }
+#[test]
+fn coverage_search_never_returns_empty_range() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_add(1),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let result =
+        babelfish::checksum::search::best_coverage_candidate(
+            &crc,
+            &frames,
+        )
+        .expect("coverage candidate should exist");
+
+    let coverage_start = result.0;
+
+    let checksum_start =
+        frames[0].len() - crc.width();
+
+    assert!(coverage_start < checksum_start);
+}

@@ -11,10 +11,26 @@ pub trait Checksum {
 
 pub struct ChecksumCandidate {
     pub algorithm: Box<dyn Checksum>,
+
+    /// First byte included in checksum calculation.
     pub coverage_start: usize,
-    pub checksum_offsets: Vec<usize>,
+
+    /// First byte excluded from checksum calculation.
+    pub coverage_end: usize,
+
+    /// First byte containing the checksum.
+    pub checksum_start: usize,
+
+    /// One past the final checksum byte.
+    pub checksum_end: usize,
+
+    /// Number of frames that validated.
     pub validation_count: usize,
+
+    /// Total number of frames tested.
     pub total_frames: usize,
+
+    /// Indexes of frames that failed validation.
     pub failed_frames: Vec<usize>,
 }
 

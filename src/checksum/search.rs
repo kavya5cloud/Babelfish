@@ -129,37 +129,37 @@ pub fn search_algorithms(
     default_algorithms()
         .into_iter()
         .filter_map(|algorithm| {
-            let coverage_start = 0;
+            let (coverage_start, validation_count) =
+                best_coverage_candidate(
+                    algorithm.as_ref(),
+                    frames,
+                )?;
 
-            let checksum_offsets = frames
+            let checksum_width = algorithm.width();
+
+            let checksum_end = frames
                 .iter()
-                .map(|frame| {
-                    let width = algorithm.width();
+                .map(|frame| frame.len())
+                .filter(|&len| len >= checksum_width)
+                .map(|len| len)
+                .min()?;
 
-                    if frame.len() < width {
-                        None
-                    } else {
-                        Some(frame.len() - width)
-                    }
-                })
-                .collect::<Option<Vec<_>>>()?;
+            let checksum_start =
+                checksum_end - checksum_width;
 
-            let validation_count = count_valid_frames(
-                algorithm.as_ref(),
-                frames,
-                coverage_start,
-            );
-
-            let failed_frames = failed_frame_indexes(
-                algorithm.as_ref(),
-                frames,
-                coverage_start,
-            );
+            let failed_frames =
+                failed_frame_indexes(
+                    algorithm.as_ref(),
+                    frames,
+                    coverage_start,
+                );
 
             Some(ChecksumCandidate {
                 algorithm,
                 coverage_start,
-                checksum_offsets,
+                coverage_end: checksum_start,
+                checksum_start,
+                checksum_end,
                 validation_count,
                 total_frames: frames.len(),
                 failed_frames,
@@ -167,7 +167,6 @@ pub fn search_algorithms(
         })
         .collect()
 }
-
 pub fn rank_candidates(
     mut candidates: Vec<ChecksumCandidate>,
 ) -> Vec<ChecksumCandidate> {
@@ -251,7 +250,7 @@ pub fn best_coverage_candidate(
         })
         .min()?;
 
-    (0..=max_coverage_start)
+    (0..max_coverage_start)
         .map(|coverage_start| {
             let validation_count = count_valid_frames(
                 algorithm,
