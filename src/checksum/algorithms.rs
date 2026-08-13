@@ -11,8 +11,17 @@ pub trait Checksum {
 
 pub struct ChecksumCandidate {
     pub algorithm: Box<dyn Checksum>,
+
+    /// First byte containing the checksum.
     pub checksum_offset: usize,
+
+    /// First byte included in checksum calculation.
+    pub coverage_start: usize,
+
+    /// Number of frames that validated.
     pub validation_count: usize,
+
+    /// Total number of frames tested.
     pub total_frames: usize,
 }
 
@@ -29,7 +38,6 @@ impl ChecksumCandidate {
         self.validation_count == self.total_frames
     }
 }
-
 pub struct XorChecksum;
 
 impl Checksum for XorChecksum {

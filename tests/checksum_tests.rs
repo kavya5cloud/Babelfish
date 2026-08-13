@@ -21,6 +21,7 @@ fn validates_crc16_modbus_frame() {
     let valid = babelfish::checksum::search::validate_frame(
         &crc,
         &frame,
+        0,
         4,
     );
 
@@ -170,4 +171,34 @@ fn returns_crc16_modbus_as_best_candidate() {
     assert_eq!(best.validation_count, 100);
     assert_eq!(best.total_frames, 100);
     assert!(best.is_proven());
+}
+
+#[test]
+fn discovers_checksum_coverage_after_header() {
+    let crc = Crc16Modbus;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            i,
+            i.wrapping_mul(3),
+            i.wrapping_add(10),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = vec![0xAA];
+        frame.extend_from_slice(&data);
+        frame.extend_from_slice(&(checksum as u16).to_le_bytes());
+
+        frames.push(frame);
+    }
+
+    let positions =
+        babelfish::checksum::search::coverage_candidates(
+            &crc,
+            &frames,
+        );
+
+    assert_eq!(positions, vec![1]);
 }
