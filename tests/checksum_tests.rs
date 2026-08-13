@@ -354,3 +354,34 @@ fn discovers_crc8_coverage_after_header() {
 
     assert_eq!(positions, vec![1]);
 }
+
+#[test]
+fn selects_crc8_over_other_algorithms() {
+    let crc = Crc8;
+    let mut frames = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            0x10,
+            i,
+            i.wrapping_mul(5),
+            i.wrapping_add(7),
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = data;
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let best =
+        babelfish::checksum::search::best_candidate(&frames)
+            .expect("a candidate should exist");
+
+    assert_eq!(best.algorithm.name(), "CRC8");
+    assert_eq!(best.validation_count, 100);
+    assert_eq!(best.total_frames, 100);
+    assert!(best.is_proven());
+}
