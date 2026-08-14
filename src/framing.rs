@@ -1,7 +1,12 @@
+use crate::checksum::search::best_candidate;
+
 pub struct FramingCandidate {
     pub prefix: Vec<u8>,
     pub frame_count: usize,
+    pub checksum_validation_count: usize,
+    pub checksum_total_frames: usize,
 }
+
 pub fn find_recurring_prefixes(
     stream: &[u8],
     min_length: usize,
@@ -86,6 +91,7 @@ pub fn split_on_prefix(
 
     frames
 }
+
 pub fn build_framing_candidates(
     stream: &[u8],
     min_prefix_length: usize,
@@ -109,9 +115,20 @@ pub fn build_framing_candidates(
                 return None;
             }
 
+            let (checksum_validation_count, checksum_total_frames) =
+                match best_candidate(&frames) {
+                    Some(candidate) => (
+                        candidate.validation_count,
+                        candidate.total_frames,
+                    ),
+                    None => (0, frames.len()),
+                };
+
             Some(FramingCandidate {
                 prefix,
                 frame_count: frames.len(),
+                checksum_validation_count,
+                checksum_total_frames,
             })
         })
         .collect()

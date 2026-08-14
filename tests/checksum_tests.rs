@@ -975,3 +975,54 @@ fn builds_framing_candidates_from_raw_stream() {
 
     assert_eq!(candidate.frame_count, 3);
 }
+#[test]
+fn framing_candidate_contains_checksum_evidence() {
+    let crc = Crc8;
+    let mut stream = Vec::new();
+    let mut generated = 0u8;
+
+    while generated < 100 {
+        let data = vec![
+            generated % 0x7E,
+            generated.wrapping_add(1) % 0x7E,
+            generated.wrapping_mul(3) % 0x7E,
+        ];
+
+        let checksum = crc.calculate(&data) as u8;
+
+        if checksum == 0x7E {
+            generated = generated.wrapping_add(1);
+            continue;
+        }
+
+        let mut frame = vec![0x7E];
+        frame.extend_from_slice(&data);
+        frame.push(checksum);
+
+        stream.extend_from_slice(&frame);
+
+        generated = generated.wrapping_add(1);
+    }
+
+    let candidates =
+        babelfish::framing::build_framing_candidates(
+            &stream,
+            1,
+            1,
+        );
+
+    let candidate = candidates
+        .iter()
+        .find(|candidate| candidate.prefix == vec![0x7E])
+        .expect("0x7E framing candidate should exist");
+
+    assert_eq!(candidate.frame_count, 100);
+    assert_eq!(
+        candidate.checksum_validation_count,
+        100
+    );
+    assert_eq!(
+        candidate.checksum_total_frames,
+        100
+    );
+}
