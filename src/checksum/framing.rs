@@ -97,7 +97,7 @@ pub fn build_framing_candidates(
         max_prefix_length,
     );
 
-    prefixes
+    let candidates = prefixes
         .into_iter()
         .filter_map(|prefix| {
             let frames = split_on_prefix(
@@ -109,10 +109,37 @@ pub fn build_framing_candidates(
                 return None;
             }
 
+            let (checksum_validation_count, checksum_total_frames) =
+                match best_candidate(&frames) {
+                    Some(candidate) => (
+                        candidate.validation_count,
+                        candidate.total_frames,
+                    ),
+                    None => (0, frames.len()),
+                };
+
             Some(FramingCandidate {
                 prefix,
                 frame_count: frames.len(),
+                checksum_validation_count,
+                checksum_total_frames,
             })
         })
-        .collect()
+        .collect();
+
+    rank_framing_candidates(candidates)
+}
+
+pub fn best_framing_candidate(
+    stream: &[u8],
+    min_prefix_length: usize,
+    max_prefix_length: usize,
+) -> Option<FramingCandidate> {
+    let candidates = build_framing_candidates(
+        stream,
+        min_prefix_length,
+        max_prefix_length,
+    );
+
+    candidates.into_iter().next()
 }

@@ -1026,3 +1026,106 @@ fn framing_candidate_contains_checksum_evidence() {
         100
     );
 }
+
+#[test]
+fn ranks_framing_candidates_by_checksum_evidence() {
+    use babelfish::framing::{
+        rank_framing_candidates,
+        FramingCandidate,
+    };
+
+    let weak = FramingCandidate {
+        prefix: vec![0xAA],
+        frame_count: 100,
+        checksum_validation_count: 20,
+        checksum_total_frames: 100,
+    };
+
+    let strong = FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    let ranked = rank_framing_candidates(vec![
+        weak,
+        strong,
+    ]);
+
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].prefix, vec![0x7E]);
+    assert_eq!(ranked[0].score(), 1.0);
+    assert_eq!(ranked[1].prefix, vec![0xAA]);
+    assert_eq!(ranked[1].score(), 0.2);
+}
+
+#[test]
+fn returns_best_framing_candidate() {
+    let crc = Crc8;
+    let mut stream = Vec::new();
+
+    for i in 0u8..100 {
+        let data = vec![
+            i % 0x7E,
+            i.wrapping_add(1) % 0x7E,
+            i.wrapping_mul(3) % 0x7E,
+        ];
+
+        let checksum = crc.calculate(&data) as u8;
+
+        if checksum == 0x7E {
+            continue;
+        }
+
+        let mut frame = vec![0x7E];
+        frame.extend_from_slice(&data);
+        frame.push(checksum);
+
+        stream.extend_from_slice(&frame);
+    }
+
+    let best = babelfish::framing::best_framing_candidate(
+        &stream,
+        1,
+        1,
+    )
+    .expect("a framing candidate should exist");
+
+    assert_eq!(best.prefix, vec![0x7E]);
+    assert_eq!(best.checksum_validation_count, best.checksum_total_frames);
+}   
+
+#[test]
+fn parses_hex_stream_file() {
+    use std::fs;
+
+    let path = std::env::temp_dir()
+        .join("babelfish_test_stream.txt");
+
+    let content = "\
+7E 01 02
+03 04 05
+
+# another chunk
+06 07 08
+";
+
+    fs::write(&path, content)
+        .expect("failed to write test stream");
+
+    let stream =
+        babelfish::input::parse_hex_stream_file(&path)
+            .expect("stream should parse");
+
+    assert_eq!(
+        stream,
+        vec![
+            0x7E, 0x01, 0x02,
+            0x03, 0x04, 0x05,
+            0x06, 0x07, 0x08,
+        ]
+    );
+
+    fs::remove_file(path).ok();
+}

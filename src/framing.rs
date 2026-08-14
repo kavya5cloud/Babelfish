@@ -6,7 +6,34 @@ pub struct FramingCandidate {
     pub checksum_validation_count: usize,
     pub checksum_total_frames: usize,
 }
+impl FramingCandidate {
+    pub fn checksum_validation_rate(&self) -> f64 {
+        if self.checksum_total_frames == 0 {
+            return 0.0;
+        }
 
+        self.checksum_validation_count as f64
+            / self.checksum_total_frames as f64
+    }
+
+    pub fn score(&self) -> f64 {
+        self.checksum_validation_rate()
+    }
+}
+pub fn rank_framing_candidates(
+    mut candidates: Vec<FramingCandidate>,
+) -> Vec<FramingCandidate> {
+    candidates.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                b.frame_count.cmp(&a.frame_count)
+            })
+    });
+
+    candidates
+}
 pub fn find_recurring_prefixes(
     stream: &[u8],
     min_length: usize,
@@ -132,4 +159,18 @@ pub fn build_framing_candidates(
             })
         })
         .collect()
+}
+
+pub fn best_framing_candidate(
+    stream: &[u8],
+    min_prefix_length: usize,
+    max_prefix_length: usize,
+) -> Option<FramingCandidate> {
+    let candidates = build_framing_candidates(
+        stream,
+        min_prefix_length,
+        max_prefix_length,
+    );
+
+    candidates.into_iter().next()
 }
