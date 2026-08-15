@@ -1035,18 +1035,20 @@ fn ranks_framing_candidates_by_checksum_evidence() {
     };
 
     let weak = FramingCandidate {
-        prefix: vec![0xAA],
-        frame_count: 100,
-        checksum_validation_count: 20,
-        checksum_total_frames: 100,
-    };
+    prefix: vec![0xAA],
+    frame_count: 100,
+    checksum_algorithm: Some("CRC8".to_string()),
+    checksum_validation_count: 20,
+    checksum_total_frames: 100,
+};
 
-    let strong = FramingCandidate {
-        prefix: vec![0x7E],
-        frame_count: 100,
-        checksum_validation_count: 100,
-        checksum_total_frames: 100,
-    };
+let strong = FramingCandidate {
+    prefix: vec![0x7E],
+    frame_count: 100,
+    checksum_algorithm: Some("CRC8".to_string()),
+    checksum_validation_count: 100,
+    checksum_total_frames: 100,
+};
 
     let ranked = rank_framing_candidates(vec![
         weak,
@@ -1128,4 +1130,73 @@ fn parses_hex_stream_file() {
     );
 
     fs::remove_file(path).ok();
+}
+
+#[test]
+fn framing_candidate_confidence_increases_with_evidence() {
+    use babelfish::framing::FramingCandidate;
+
+    let weak = FramingCandidate {
+        prefix: vec![0xAA],
+        frame_count: 10,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 5,
+        checksum_total_frames: 10,
+    };
+
+    let strong = FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    assert!(strong.confidence() > weak.confidence());
+}
+
+#[test]
+fn framing_candidate_verdict_can_be_proven() {
+    use babelfish::framing::FramingCandidate;
+
+    let candidate = FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    assert_eq!(candidate.verdict(), "PROVEN");
+}
+
+#[test]
+fn protocol_hypothesis_combines_framing_and_checksum() {
+    use babelfish::hypothesis::ProtocolHypothesis;
+
+    let framing = babelfish::framing::FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    let checksum =
+        babelfish::checksum::search::best_candidate(
+            &vec![
+                vec![0x10, 0x01, 0x02, 0x03, 0x00],
+                vec![0x10, 0x02, 0x03, 0x04, 0x00],
+            ],
+        )
+        .expect("checksum candidate should exist");
+
+    let hypothesis = ProtocolHypothesis {
+        framing,
+        checksum,
+    };
+
+    assert!(hypothesis.validation_rate() >= 0.0);
+    assert!(hypothesis.confidence() >= 0.0);
+    assert!(!hypothesis.verdict().is_empty());
 }

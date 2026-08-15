@@ -3,9 +3,11 @@ use crate::checksum::search::best_candidate;
 pub struct FramingCandidate {
     pub prefix: Vec<u8>,
     pub frame_count: usize,
+    pub checksum_algorithm: Option<String>,
     pub checksum_validation_count: usize,
     pub checksum_total_frames: usize,
 }
+
 impl FramingCandidate {
     pub fn checksum_validation_rate(&self) -> f64 {
         if self.checksum_total_frames == 0 {
@@ -19,7 +21,37 @@ impl FramingCandidate {
     pub fn score(&self) -> f64 {
         self.checksum_validation_rate()
     }
+    pub fn confidence(&self) -> f64 {
+    if self.checksum_total_frames == 0 {
+        return 0.0;
+    }
+
+    let validation_rate =
+        self.checksum_validation_rate();
+
+    let evidence_factor =
+        1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+
+    validation_rate * evidence_factor
 }
+
+pub fn verdict(&self) -> &'static str {
+    let confidence = self.confidence();
+
+    if self.checksum_validation_count == self.checksum_total_frames
+        && self.checksum_total_frames >= 100
+    {
+        "PROVEN"
+    } else if confidence >= 0.70 {
+        "LIKELY"
+    } else if confidence >= 0.20 {
+        "WEAK"
+    } else {
+        "REJECTED"
+    }
+}
+}
+
 pub fn rank_framing_candidates(
     mut candidates: Vec<FramingCandidate>,
 ) -> Vec<FramingCandidate> {
@@ -27,13 +59,12 @@ pub fn rank_framing_candidates(
         b.score()
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                b.frame_count.cmp(&a.frame_count)
-            })
+            .then_with(|| b.frame_count.cmp(&a.frame_count))
     });
 
     candidates
 }
+
 pub fn find_recurring_prefixes(
     stream: &[u8],
     min_length: usize,
@@ -130,35 +161,38 @@ pub fn build_framing_candidates(
         max_prefix_length,
     );
 
-    prefixes
+    let candidates = prefixes
         .into_iter()
         .filter_map(|prefix| {
-            let frames = split_on_prefix(
-                stream,
-                &prefix,
-            );
+            let frames = split_on_prefix(&stream, &prefix);
 
             if frames.len() < 2 {
                 return None;
             }
 
-            let (checksum_validation_count, checksum_total_frames) =
-                match best_candidate(&frames) {
-                    Some(candidate) => (
-                        candidate.validation_count,
-                        candidate.total_frames,
+            match best_candidate(&frames) {
+                Some(candidate) => Some(FramingCandidate {
+                    prefix,
+                    frame_count: frames.len(),
+                    checksum_algorithm: Some(
+                        candidate.algorithm.name().to_string(),
                     ),
-                    None => (0, frames.len()),
-                };
+                    checksum_validation_count: candidate.validation_count,
+                    checksum_total_frames: candidate.total_frames,
+                }),
 
-            Some(FramingCandidate {
-                prefix,
-                frame_count: frames.len(),
-                checksum_validation_count,
-                checksum_total_frames,
-            })
+                None => Some(FramingCandidate {
+                    prefix,
+                    frame_count: frames.len(),
+                    checksum_algorithm: None,
+                    checksum_validation_count: 0,
+                    checksum_total_frames: frames.len(),
+                }),
+            }
         })
-        .collect()
+        .collect();
+
+    rank_framing_candidates(candidates)
 }
 
 pub fn best_framing_candidate(
