@@ -1056,10 +1056,9 @@ let strong = FramingCandidate {
     ]);
 
     assert_eq!(ranked.len(), 2);
-    assert_eq!(ranked[0].prefix, vec![0x7E]);
-    assert_eq!(ranked[0].score(), 1.0);
-    assert_eq!(ranked[1].prefix, vec![0xAA]);
-    assert_eq!(ranked[1].score(), 0.2);
+assert_eq!(ranked[0].prefix, vec![0x7E]);
+assert_eq!(ranked[1].prefix, vec![0xAA]);
+assert!(ranked[0].score() > ranked[1].score());
 }
 
 #[test]
@@ -1192,10 +1191,11 @@ fn protocol_hypothesis_combines_framing_and_checksum() {
         .expect("checksum candidate should exist");
 
     let hypothesis = ProtocolHypothesis {
-        framing,
-        checksum,
-        fields: Vec::new(),
-    };
+    framing,
+    checksum,
+    fields: Vec::new(),
+    multi_byte_fields: Vec::new(),
+};
 
     assert!(hypothesis.validation_rate() >= 0.0);
     assert!(hypothesis.confidence() >= 0.0);
@@ -1538,4 +1538,272 @@ fn infers_length_field_hypothesis() {
     assert_eq!(hypothesis.unique_values, 1);
     assert_eq!(hypothesis.min_value, 0x03);
     assert_eq!(hypothesis.max_value, 0x03);
+}
+#[test]
+fn decodes_u16_little_endian_values() {
+    let frames = vec![
+        vec![0xAA, 0x00, 0x00],
+        vec![0xAA, 0x01, 0x00],
+        vec![0xAA, 0x02, 0x00],
+        vec![0xAA, 0x03, 0x00],
+    ];
+
+    let values =
+        babelfish::fields::decode_u16_le(
+            &frames,
+            1,
+        )
+        .expect("u16 values should decode");
+
+    assert_eq!(
+        values,
+        vec![0, 1, 2, 3]
+    );
+
+    assert!(
+        babelfish::fields::is_incrementing_u16(
+            &frames,
+            1,
+            true,
+        )
+    );
+
+    assert!(
+        !babelfish::fields::is_incrementing_u16(
+            &frames,
+            1,
+            false,
+        )
+    );
+}
+#[test]
+fn infers_u16_little_endian_incrementing_field() {
+    let frames = vec![
+        vec![0xAA, 0x00, 0x00],
+        vec![0xAA, 0x01, 0x00],
+        vec![0xAA, 0x02, 0x00],
+        vec![0xAA, 0x03, 0x00],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_u16_field(
+            &frames,
+            1,
+        )
+        .expect("u16 field hypothesis should exist");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::MultiByteKind::U16LittleEndian
+    );
+
+    assert_eq!(hypothesis.start, 1);
+    assert_eq!(hypothesis.width, 2);
+    assert_eq!(hypothesis.unique_values, 4);
+    assert_eq!(hypothesis.min_value, 0);
+    assert_eq!(hypothesis.max_value, 3);
+    assert!(hypothesis.is_incrementing);
+}
+
+#[test]
+fn ranks_multi_byte_hypotheses() {
+    use babelfish::fields::{
+        MultiByteFieldHypothesis,
+        MultiByteKind,
+    };
+
+    let strong = MultiByteFieldHypothesis {
+        start: 2,
+        width: 2,
+        kind: MultiByteKind::U16LittleEndian,
+        unique_values: 100,
+        min_value: 0,
+        max_value: 99,
+        is_incrementing: true,
+    };
+
+    let weak = MultiByteFieldHypothesis {
+        start: 1,
+        width: 2,
+        kind: MultiByteKind::U16BigEndian,
+        unique_values: 1,
+        min_value: 4096,
+        max_value: 4096,
+        is_incrementing: false,
+    };
+
+    assert!(strong.score() > weak.score());
+}
+#[test]
+fn ranks_overlapping_u16_hypotheses() {
+    let frames = vec![
+        vec![0x10, 0x00, 0x00],
+        vec![0x10, 0x01, 0x00],
+        vec![0x10, 0x02, 0x00],
+        vec![0x10, 0x03, 0x00],
+    ];
+
+    let hypotheses =
+        babelfish::fields::infer_u16_fields(
+            &frames,
+            0,
+            3,
+        );
+
+    assert_eq!(hypotheses.len(), 2);
+
+    assert!(
+        hypotheses.iter().any(|h| {
+            h.kind
+                == babelfish::fields::MultiByteKind::U16LittleEndian
+                && h.start == 1
+        })
+    );
+
+    assert!(
+        hypotheses.iter().any(|h| {
+            h.kind
+                == babelfish::fields::MultiByteKind::U16BigEndian
+                && h.start == 0
+        })
+    );
+
+    assert!(
+        hypotheses
+            .iter()
+            .all(|hypothesis| hypothesis.score() > 0.0)
+    );
+}
+#[test]
+fn decodes_u32_little_endian_values() {
+    let frames = vec![
+        vec![0xAA, 0x00, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x01, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x02, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x03, 0x00, 0x00, 0x00],
+    ];
+
+    let values =
+        babelfish::fields::decode_u32_le(
+            &frames,
+            1,
+        )
+        .expect("u32 values should decode");
+
+    assert_eq!(
+        values,
+        vec![0, 1, 2, 3]
+    );
+
+    assert!(
+        babelfish::fields::is_incrementing_u32(
+            &frames,
+            1,
+            true,
+        )
+    );
+
+    assert!(
+        !babelfish::fields::is_incrementing_u32(
+            &frames,
+            1,
+            false,
+        )
+    );
+}
+#[test]
+fn infers_u32_little_endian_incrementing_field() {
+    let frames = vec![
+        vec![0xAA, 0x00, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x01, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x02, 0x00, 0x00, 0x00],
+        vec![0xAA, 0x03, 0x00, 0x00, 0x00],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_u32_field(
+            &frames,
+            1,
+        )
+        .expect("u32 field hypothesis should exist");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::MultiByteKind::U32LittleEndian
+    );
+
+    assert_eq!(hypothesis.start, 1);
+    assert_eq!(hypothesis.width, 4);
+    assert_eq!(hypothesis.unique_values, 4);
+    assert_eq!(hypothesis.min_value, 0);
+    assert_eq!(hypothesis.max_value, 3);
+    assert!(hypothesis.is_incrementing);
+}
+
+#[test]
+fn prefers_shorter_framing_prefix_when_evidence_ties() {
+    use babelfish::framing::{
+        rank_framing_candidates,
+        FramingCandidate,
+    };
+
+    let short = FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    let long = FramingCandidate {
+        prefix: vec![0x7E, 0x10],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    let ranked =
+        rank_framing_candidates(vec![long, short]);
+
+    assert_eq!(ranked[0].prefix, vec![0x7E]);
+    assert_eq!(ranked[1].prefix, vec![0x7E, 0x10]);
+
+    assert!(ranked[0].score() > ranked[1].score());
+}
+#[test]
+fn prefers_more_evidence_when_validation_rate_ties() {
+    use babelfish::framing::{
+        rank_framing_candidates,
+        FramingCandidate,
+    };
+
+    let tiny = FramingCandidate {
+        prefix: vec![0x02],
+        frame_count: 2,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 2,
+        checksum_total_frames: 2,
+    };
+
+    let large = FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
+
+    let ranked =
+        rank_framing_candidates(vec![tiny, large]);
+
+    assert_eq!(
+        ranked[0].prefix,
+        vec![0x7E]
+    );
+
+    assert!(
+        ranked[0].score()
+            > ranked[1].score()
+    );
 }

@@ -32,7 +32,9 @@ fn print_checksum_candidates(frames: &[Vec<u8>]) {
             candidate.failed_frames.len(),
         );
 
-        if !candidate.is_proven() && !candidate.failed_frames.is_empty() {
+        if !candidate.is_proven()
+            && !candidate.failed_frames.is_empty()
+        {
             let preview: Vec<String> = candidate
                 .failed_frames
                 .iter()
@@ -91,21 +93,66 @@ fn crack_stream_file(path: &str) {
     println!("Raw stream bytes: {}", stream.len());
     println!();
 
-    let framing = match best_framing_candidate(&stream, 1, 3) {
+    // Temporary diagnostic output:
+    // show every framing hypothesis and its score.
+    let framing_candidates =
+        babelfish::framing::build_framing_candidates(
+            &stream,
+            1,
+            3,
+        );
+
+    println!("Framing candidates:");
+
+    for candidate in &framing_candidates {
+        println!(
+            "  prefix: {:02X?}  frames: {:<4} validation: {}/{}  score: {:.4}",
+            candidate.prefix,
+            candidate.frame_count,
+            candidate.checksum_validation_count,
+            candidate.checksum_total_frames,
+            candidate.score(),
+        );
+    }
+
+    println!();
+
+    let framing = match best_framing_candidate(
+        &stream,
+        1,
+        3,
+    ) {
         Some(candidate) => candidate,
         None => {
-            eprintln!("Could not find a framing hypothesis.");
+            eprintln!(
+                "Could not find a framing hypothesis."
+            );
             process::exit(1);
         }
     };
 
     println!("Best framing candidate:");
-    println!("  prefix: {:02X?}", framing.prefix);
-    println!("  frames: {}", framing.frame_count);
+    println!(
+        "  prefix: {:02X?}",
+        framing.prefix
+    );
+    println!(
+        "  frames: {}",
+        framing.frame_count
+    );
 
     match &framing.checksum_algorithm {
-        Some(algorithm) => println!("  checksum: {}", algorithm),
-        None => println!("  checksum: unknown"),
+        Some(algorithm) => {
+            println!(
+                "  checksum: {}",
+                algorithm
+            );
+        }
+        None => {
+            println!(
+                "  checksum: unknown"
+            );
+        }
     }
 
     println!(
@@ -127,10 +174,11 @@ fn crack_stream_file(path: &str) {
 
     println!();
 
-    let frames = babelfish::framing::split_on_prefix(
-        &stream,
-        &framing.prefix,
-    );
+    let frames =
+        babelfish::framing::split_on_prefix(
+            &stream,
+            &framing.prefix,
+        );
 
     let hypothesis =
         match babelfish::hypothesis::build_hypothesis(
@@ -139,44 +187,54 @@ fn crack_stream_file(path: &str) {
         ) {
             Some(hypothesis) => hypothesis,
             None => {
-                eprintln!("Could not build a protocol hypothesis.");
+                eprintln!(
+                    "Could not build a protocol hypothesis."
+                );
                 process::exit(1);
             }
         };
 
     println!("Protocol hypothesis:");
+
     println!(
         "  framing prefix: {:02X?}",
         hypothesis.framing.prefix
     );
+
     println!(
         "  frames: {}",
         hypothesis.framing.frame_count
     );
+
     println!(
         "  checksum: {}",
         hypothesis.checksum.algorithm.name()
     );
+
     println!(
         "  coverage: bytes[{}..{}]",
         hypothesis.checksum.coverage_start,
         hypothesis.checksum.coverage_end
     );
+
     println!(
         "  checksum: bytes[{}..{}]",
         hypothesis.checksum.checksum_start,
         hypothesis.checksum.checksum_end
     );
+
     println!(
         "  validation: {}/{} ({:.2}%)",
         hypothesis.checksum.validation_count,
         hypothesis.checksum.total_frames,
         hypothesis.validation_rate() * 100.0
     );
+
     println!(
         "  confidence: {:.2}",
         hypothesis.confidence()
     );
+
     println!(
         "  verdict: {}",
         hypothesis.verdict()
@@ -220,6 +278,46 @@ fn crack_stream_file(path: &str) {
             }
         }
     }
+
+    if !hypothesis.multi_byte_fields.is_empty() {
+        println!();
+        println!("Multi-byte fields:");
+
+        for field in &hypothesis.multi_byte_fields {
+            println!(
+                "  bytes[{}..{}]  {:?}  unique: {:<4} range: {}..{}  incrementing: {}",
+                field.start,
+                field.start + field.width,
+                field.kind,
+                field.unique_values,
+                field.min_value,
+                field.max_value,
+                field.is_incrementing,
+            );
+        }
+    }
+
+    let ambiguous =
+        hypothesis.ambiguous_multi_byte_fields();
+
+    if ambiguous.len() > 1 {
+        println!();
+        println!("Multi-byte ambiguity:");
+
+        for field in &ambiguous {
+            println!(
+                "  bytes[{}..{}]  {:?}  score: {:.2}",
+                field.start,
+                field.start + field.width,
+                field.kind,
+                field.score(),
+            );
+        }
+
+        println!(
+            "  multiple interpretations have equal evidence."
+        );
+    }
 }
 
 fn print_usage() {
@@ -248,7 +346,10 @@ fn main() {
         }
 
         _ => {
-            eprintln!("Unknown command '{}'.", args[1]);
+            eprintln!(
+                "Unknown command '{}'.",
+                args[1]
+            );
             eprintln!();
             print_usage();
             process::exit(1);

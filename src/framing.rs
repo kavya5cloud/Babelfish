@@ -19,37 +19,53 @@ impl FramingCandidate {
     }
 
     pub fn score(&self) -> f64 {
-        self.checksum_validation_rate()
+        let validation_rate = self.checksum_validation_rate();
+
+        if self.checksum_total_frames == 0 {
+            return 0.0;
+        }
+
+        let evidence_factor =
+            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+
+        let validation_score =
+            validation_rate * evidence_factor;
+
+        let prefix_penalty =
+            self.prefix.len() as f64 * 0.01;
+
+        validation_score - prefix_penalty
     }
+
     pub fn confidence(&self) -> f64 {
-    if self.checksum_total_frames == 0 {
-        return 0.0;
+        if self.checksum_total_frames == 0 {
+            return 0.0;
+        }
+
+        let validation_rate =
+            self.checksum_validation_rate();
+
+        let evidence_factor =
+            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+
+        validation_rate * evidence_factor
     }
 
-    let validation_rate =
-        self.checksum_validation_rate();
+    pub fn verdict(&self) -> &'static str {
+        let confidence = self.confidence();
 
-    let evidence_factor =
-        1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
-
-    validation_rate * evidence_factor
-}
-
-pub fn verdict(&self) -> &'static str {
-    let confidence = self.confidence();
-
-    if self.checksum_validation_count == self.checksum_total_frames
-        && self.checksum_total_frames >= 100
-    {
-        "PROVEN"
-    } else if confidence >= 0.70 {
-        "LIKELY"
-    } else if confidence >= 0.20 {
-        "WEAK"
-    } else {
-        "REJECTED"
+        if self.checksum_validation_count == self.checksum_total_frames
+            && self.checksum_total_frames >= 100
+        {
+            "PROVEN"
+        } else if confidence >= 0.70 {
+            "LIKELY"
+        } else if confidence >= 0.20 {
+            "WEAK"
+        } else {
+            "REJECTED"
+        }
     }
-}
 }
 
 pub fn rank_framing_candidates(
@@ -59,6 +75,7 @@ pub fn rank_framing_candidates(
         b.score()
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.prefix.len().cmp(&b.prefix.len()))
             .then_with(|| b.frame_count.cmp(&a.frame_count))
     });
 
@@ -70,7 +87,10 @@ pub fn find_recurring_prefixes(
     min_length: usize,
     max_length: usize,
 ) -> Vec<Vec<u8>> {
-    if stream.is_empty() || min_length == 0 || min_length > max_length {
+    if stream.is_empty()
+        || min_length == 0
+        || min_length > max_length
+    {
         return Vec::new();
     }
 
@@ -124,7 +144,10 @@ pub fn split_on_prefix(
 
     let mut starts = Vec::new();
 
-    for position in 0..=stream.len().saturating_sub(prefix.len()) {
+    for position in 0..=stream
+        .len()
+        .saturating_sub(prefix.len())
+    {
         if &stream[position..position + prefix.len()] == prefix {
             starts.push(position);
         }
@@ -164,7 +187,7 @@ pub fn build_framing_candidates(
     let candidates = prefixes
         .into_iter()
         .filter_map(|prefix| {
-            let frames = split_on_prefix(&stream, &prefix);
+            let frames = split_on_prefix(stream, &prefix);
 
             if frames.len() < 2 {
                 return None;
@@ -177,8 +200,10 @@ pub fn build_framing_candidates(
                     checksum_algorithm: Some(
                         candidate.algorithm.name().to_string(),
                     ),
-                    checksum_validation_count: candidate.validation_count,
-                    checksum_total_frames: candidate.total_frames,
+                    checksum_validation_count:
+                        candidate.validation_count,
+                    checksum_total_frames:
+                        candidate.total_frames,
                 }),
 
                 None => Some(FramingCandidate {

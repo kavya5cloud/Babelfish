@@ -129,11 +129,12 @@ pub fn is_cyclic_byte(
         return false;
     }
 
-    values.iter().enumerate().all(
-        |(index, &value)| {
+    values
+        .iter()
+        .enumerate()
+        .all(|(index, &value)| {
             value == values[index % cycle_length]
-        },
-    )
+        })
 }
 
 pub fn detect_linear_byte_pattern(
@@ -218,34 +219,34 @@ pub fn infer_field_hypothesis(
         );
 
     let kind =
-    if is_length_field(
-        frames,
-        position,
-        checksum_start,
-    ) {
-        FieldKind::Length
-    } else if observation.is_constant {
-        FieldKind::Constant
-    } else if is_incrementing_byte(
-        frames,
-        position,
-    ) {
-        FieldKind::Incrementing
-    } else if let Some(step) = linear_step {
-        if step != 0 {
-            FieldKind::Linear
+        if is_length_field(
+            frames,
+            position,
+            checksum_start,
+        ) {
+            FieldKind::Length
+        } else if observation.is_constant {
+            FieldKind::Constant
+        } else if is_incrementing_byte(
+            frames,
+            position,
+        ) {
+            FieldKind::Incrementing
+        } else if let Some(step) = linear_step {
+            if step != 0 {
+                FieldKind::Linear
+            } else {
+                FieldKind::Variable
+            }
+        } else if is_cyclic_byte(
+            frames,
+            position,
+            3,
+        ) {
+            FieldKind::Cyclic
         } else {
             FieldKind::Variable
-        }
-    } else if is_cyclic_byte(
-        frames,
-        position,
-        3,
-    ) {
-        FieldKind::Cyclic
-    } else {
-        FieldKind::Variable
-    };
+        };
 
     Some(FieldHypothesis {
         position,
@@ -287,4 +288,409 @@ pub fn infer_fields(
             )
         })
         .collect()
+}
+
+pub fn decode_u16_le(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<Vec<u16>> {
+    if frames.is_empty() {
+        return None;
+    }
+
+    let mut values =
+        Vec::with_capacity(frames.len());
+
+    for frame in frames {
+        if position + 2 > frame.len() {
+            return None;
+        }
+
+        let value =
+            u16::from_le_bytes([
+                frame[position],
+                frame[position + 1],
+            ]);
+
+        values.push(value);
+    }
+
+    Some(values)
+}
+
+pub fn decode_u16_be(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<Vec<u16>> {
+    if frames.is_empty() {
+        return None;
+    }
+
+    let mut values =
+        Vec::with_capacity(frames.len());
+
+    for frame in frames {
+        if position + 2 > frame.len() {
+            return None;
+        }
+
+        let value =
+            u16::from_be_bytes([
+                frame[position],
+                frame[position + 1],
+            ]);
+
+        values.push(value);
+    }
+
+    Some(values)
+}
+
+pub fn is_incrementing_u16(
+    frames: &[Vec<u8>],
+    position: usize,
+    little_endian: bool,
+) -> bool {
+    let values = if little_endian {
+        match decode_u16_le(frames, position) {
+            Some(values) => values,
+            None => return false,
+        }
+    } else {
+        match decode_u16_be(frames, position) {
+            Some(values) => values,
+            None => return false,
+        }
+    };
+
+    if values.len() < 2 {
+        return false;
+    }
+
+    values
+        .windows(2)
+        .all(|window| {
+            window[1] == window[0].wrapping_add(1)
+        })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MultiByteKind {
+    U16LittleEndian,
+    U16BigEndian,
+    U32LittleEndian,
+    U32BigEndian,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiByteFieldHypothesis {
+    pub start: usize,
+    pub width: usize,
+    pub kind: MultiByteKind,
+    pub unique_values: usize,
+    pub min_value: u64,
+    pub max_value: u64,
+    pub is_incrementing: bool,
+}
+impl MultiByteFieldHypothesis {
+    pub fn score(&self) -> f64 {
+        let mut score = 0.0;
+
+        if self.unique_values > 1 {
+            score += 0.4;
+        }
+
+        if self.is_incrementing {
+            score += 0.4;
+        }
+
+        if self.min_value != self.max_value {
+            score += 0.2;
+        }
+
+        score
+    }
+}
+
+
+pub fn infer_u16_field(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<MultiByteFieldHypothesis> {
+    let le_values =
+        decode_u16_le(frames, position)?;
+
+    let be_values =
+        decode_u16_be(frames, position)?;
+
+    let le_incrementing =
+        is_incrementing_u16(
+            frames,
+            position,
+            true,
+        );
+
+    let be_incrementing =
+        is_incrementing_u16(
+            frames,
+            position,
+            false,
+        );
+
+    let (kind, values, is_incrementing) =
+        if le_incrementing {
+            (
+                MultiByteKind::U16LittleEndian,
+                le_values,
+                true,
+            )
+        } else if be_incrementing {
+            (
+                MultiByteKind::U16BigEndian,
+                be_values,
+                true,
+            )
+        } else {
+            return None;
+        };
+
+    let min_value =
+        *values.iter().min()?;
+
+    let max_value =
+        *values.iter().max()?;
+
+    let unique_values = values
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Some(MultiByteFieldHypothesis {
+    start: position,
+    width: 2,
+    kind,
+    unique_values,
+    min_value: min_value as u64,
+    max_value: max_value as u64,
+    is_incrementing,
+})
+}
+pub fn infer_u16_fields(
+    frames: &[Vec<u8>],
+    start: usize,
+    end: usize,
+) -> Vec<MultiByteFieldHypothesis> {
+    if frames.is_empty() || start >= end {
+        return Vec::new();
+    }
+
+    let max_position = frames
+        .iter()
+        .map(|frame| frame.len())
+        .min()
+        .unwrap_or(0);
+
+    let end = end.min(max_position);
+
+    if start >= end {
+        return Vec::new();
+    }
+
+    let mut hypotheses = Vec::new();
+
+    for position in start..end.saturating_sub(1) {
+        if let Some(hypothesis) =
+            infer_u16_field(frames, position)
+        {
+            hypotheses.push(hypothesis);
+        }
+    }
+
+    hypotheses.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| {
+                a.start.cmp(&b.start)
+            })
+    });
+
+    hypotheses
+}
+pub fn decode_u32_le(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<Vec<u32>> {
+    if frames.is_empty() {
+        return None;
+    }
+
+    let mut values = Vec::with_capacity(frames.len());
+
+    for frame in frames {
+        if position + 4 > frame.len() {
+            return None;
+        }
+
+        let value = u32::from_le_bytes([
+            frame[position],
+            frame[position + 1],
+            frame[position + 2],
+            frame[position + 3],
+        ]);
+
+        values.push(value);
+    }
+
+    Some(values)
+}
+
+pub fn decode_u32_be(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<Vec<u32>> {
+    if frames.is_empty() {
+        return None;
+    }
+
+    let mut values = Vec::with_capacity(frames.len());
+
+    for frame in frames {
+        if position + 4 > frame.len() {
+            return None;
+        }
+
+        let value = u32::from_be_bytes([
+            frame[position],
+            frame[position + 1],
+            frame[position + 2],
+            frame[position + 3],
+        ]);
+
+        values.push(value);
+    }
+
+    Some(values)
+}
+
+pub fn is_incrementing_u32(
+    frames: &[Vec<u8>],
+    position: usize,
+    little_endian: bool,
+) -> bool {
+    let values = if little_endian {
+        match decode_u32_le(frames, position) {
+            Some(values) => values,
+            None => return false,
+        }
+    } else {
+        match decode_u32_be(frames, position) {
+            Some(values) => values,
+            None => return false,
+        }
+    };
+
+    if values.len() < 2 {
+        return false;
+    }
+
+    values
+        .windows(2)
+        .all(|window| {
+            window[1] == window[0].wrapping_add(1)
+        })
+}
+pub fn infer_u32_field(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<MultiByteFieldHypothesis> {
+    let le_values = decode_u32_le(frames, position)?;
+    let be_values = decode_u32_be(frames, position)?;
+
+    let le_incrementing =
+        is_incrementing_u32(frames, position, true);
+
+    let be_incrementing =
+        is_incrementing_u32(frames, position, false);
+
+    let (kind, values, is_incrementing) =
+        if le_incrementing {
+            (
+                MultiByteKind::U32LittleEndian,
+                le_values,
+                true,
+            )
+        } else if be_incrementing {
+            (
+                MultiByteKind::U32BigEndian,
+                be_values,
+                true,
+            )
+        } else {
+            return None;
+        };
+
+    let min_value = *values.iter().min()? as u64;
+    let max_value = *values.iter().max()? as u64;
+
+    let unique_values = values
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Some(MultiByteFieldHypothesis {
+        start: position,
+        width: 4,
+        kind,
+        unique_values,
+        min_value,
+        max_value,
+        is_incrementing,
+    })
+}
+pub fn infer_u32_fields(
+    frames: &[Vec<u8>],
+    start: usize,
+    end: usize,
+) -> Vec<MultiByteFieldHypothesis> {
+    if frames.is_empty() || start >= end {
+        return Vec::new();
+    }
+
+    let max_position = frames
+        .iter()
+        .map(|frame| frame.len())
+        .min()
+        .unwrap_or(0);
+
+    let end = end.min(max_position);
+
+    if start >= end {
+        return Vec::new();
+    }
+
+    let mut hypotheses = Vec::new();
+
+    if end.saturating_sub(start) < 4 {
+        return hypotheses;
+    }
+
+    for position in start..=end - 4 {
+        if let Some(hypothesis) =
+            infer_u32_field(frames, position)
+        {
+            hypotheses.push(hypothesis);
+        }
+    }
+
+    hypotheses.sort_by(|a, b| {
+        b.score()
+            .partial_cmp(&a.score())
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.start.cmp(&b.start))
+    });
+
+    hypotheses
 }
