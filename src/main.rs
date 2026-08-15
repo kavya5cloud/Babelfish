@@ -104,89 +104,122 @@ fn crack_stream_file(path: &str) {
     println!("  frames: {}", framing.frame_count);
 
     match &framing.checksum_algorithm {
-        Some(algorithm) => {
-            println!("  checksum: {}", algorithm);
-        }
-        None => {
-            println!("  checksum: unknown");
-        }
+        Some(algorithm) => println!("  checksum: {}", algorithm),
+        None => println!("  checksum: unknown"),
     }
 
     println!(
-    "  validation: {}/{} ({:.2}%)",
-    framing.checksum_validation_count,
-    framing.checksum_total_frames,
-    framing.checksum_validation_rate() * 100.0,
-);
+        "  validation: {}/{} ({:.2}%)",
+        framing.checksum_validation_count,
+        framing.checksum_total_frames,
+        framing.checksum_validation_rate() * 100.0,
+    );
 
-println!(
-    "  confidence: {:.2}",
-    framing.confidence(),
-);
+    println!(
+        "  confidence: {:.2}",
+        framing.confidence()
+    );
 
-println!(
-    "  verdict: {}",
-    framing.verdict(),
-);
+    println!(
+        "  verdict: {}",
+        framing.verdict()
+    );
 
     println!();
 
     let frames = babelfish::framing::split_on_prefix(
-    &stream,
-    &framing.prefix,
-);
+        &stream,
+        &framing.prefix,
+    );
 
-let hypothesis =
-    match babelfish::hypothesis::build_hypothesis(
-        framing,
-        &frames,
-    ) {
-        Some(hypothesis) => hypothesis,
-        None => {
-            eprintln!(
-                "Could not build a protocol hypothesis."
-            );
-            process::exit(1);
+    let hypothesis =
+        match babelfish::hypothesis::build_hypothesis(
+            framing,
+            &frames,
+        ) {
+            Some(hypothesis) => hypothesis,
+            None => {
+                eprintln!("Could not build a protocol hypothesis.");
+                process::exit(1);
+            }
+        };
+
+    println!("Protocol hypothesis:");
+    println!(
+        "  framing prefix: {:02X?}",
+        hypothesis.framing.prefix
+    );
+    println!(
+        "  frames: {}",
+        hypothesis.framing.frame_count
+    );
+    println!(
+        "  checksum: {}",
+        hypothesis.checksum.algorithm.name()
+    );
+    println!(
+        "  coverage: bytes[{}..{}]",
+        hypothesis.checksum.coverage_start,
+        hypothesis.checksum.coverage_end
+    );
+    println!(
+        "  checksum: bytes[{}..{}]",
+        hypothesis.checksum.checksum_start,
+        hypothesis.checksum.checksum_end
+    );
+    println!(
+        "  validation: {}/{} ({:.2}%)",
+        hypothesis.checksum.validation_count,
+        hypothesis.checksum.total_frames,
+        hypothesis.validation_rate() * 100.0
+    );
+    println!(
+        "  confidence: {:.2}",
+        hypothesis.confidence()
+    );
+    println!(
+        "  verdict: {}",
+        hypothesis.verdict()
+    );
+
+    println!();
+    println!("Fields:");
+
+    for field in &hypothesis.fields {
+        match field.kind {
+            babelfish::fields::FieldKind::Length => {
+                println!(
+                    "  byte {:<3} Length       unique: {:<4} range: 0x{:02X}..0x{:02X}",
+                    field.position,
+                    field.unique_values,
+                    field.min_value,
+                    field.max_value,
+                );
+            }
+
+            babelfish::fields::FieldKind::Linear => {
+                println!(
+                    "  byte {:<3} Linear       step: {:+}  unique: {:<4} range: 0x{:02X}..0x{:02X}",
+                    field.position,
+                    field.linear_step.unwrap_or(0),
+                    field.unique_values,
+                    field.min_value,
+                    field.max_value,
+                );
+            }
+
+            _ => {
+                println!(
+                    "  byte {:<3} {:<12} unique: {:<4} range: 0x{:02X}..0x{:02X}",
+                    field.position,
+                    format!("{:?}", field.kind),
+                    field.unique_values,
+                    field.min_value,
+                    field.max_value,
+                );
+            }
         }
-    };
-
-println!("Protocol hypothesis:");
-println!(
-    "  framing prefix: {:02X?}",
-    hypothesis.framing.prefix
-);
-println!(
-    "  frames: {}",
-    hypothesis.framing.frame_count
-);
-println!(
-    "  checksum: {}",
-    hypothesis.checksum.algorithm.name()
-);
-println!(
-    "  coverage: bytes[{}..{}]",
-    hypothesis.checksum.coverage_start,
-    hypothesis.checksum.coverage_end
-);
-println!(
-    "  checksum: bytes[{}..{}]",
-    hypothesis.checksum.checksum_start,
-    hypothesis.checksum.checksum_end
-);
-println!(
-    "  validation: {}/{} ({:.2}%)",
-    hypothesis.checksum.validation_count,
-    hypothesis.checksum.total_frames,
-    hypothesis.validation_rate() * 100.0
-);
-println!(
-    "  confidence: {:.2}",
-    hypothesis.confidence()
-);
-println!(
-    "  verdict: {}",
-    hypothesis.verdict()
-);
+    }
 }
 
 fn print_usage() {

@@ -1194,9 +1194,348 @@ fn protocol_hypothesis_combines_framing_and_checksum() {
     let hypothesis = ProtocolHypothesis {
         framing,
         checksum,
+        fields: Vec::new(),
     };
 
     assert!(hypothesis.validation_rate() >= 0.0);
     assert!(hypothesis.confidence() >= 0.0);
     assert!(!hypothesis.verdict().is_empty());
+}
+
+#[test]
+fn analyzes_constant_and_variable_byte_positions() {
+    let frames = vec![
+        vec![0x7E, 0x10, 0x01, 0x27, 0x01],
+        vec![0x7E, 0x10, 0x02, 0x27, 0x01],
+        vec![0x7E, 0x10, 0x03, 0x27, 0x01],
+        vec![0x7E, 0x10, 0x04, 0x27, 0x01],
+    ];
+
+    let observations =
+        babelfish::fields::analyze_byte_positions(
+            &frames,
+            0,
+            5,
+        );
+
+    assert_eq!(observations.len(), 5);
+
+    // Byte 0 is always 0x7E.
+    assert!(observations[0].is_constant);
+    assert_eq!(observations[0].unique_values, 1);
+    assert_eq!(observations[0].min_value, 0x7E);
+    assert_eq!(observations[0].max_value, 0x7E);
+
+    // Byte 1 is always 0x10.
+    assert!(observations[1].is_constant);
+    assert_eq!(observations[1].unique_values, 1);
+
+    // Byte 2 changes from 1 to 4.
+    assert!(!observations[2].is_constant);
+    assert_eq!(observations[2].unique_values, 4);
+    assert_eq!(observations[2].min_value, 0x01);
+    assert_eq!(observations[2].max_value, 0x04);
+
+    // Bytes 3 and 4 are constant.
+    assert!(observations[3].is_constant);
+    assert!(observations[4].is_constant);
+}
+#[test]
+fn detects_incrementing_byte_field() {
+    let frames = vec![
+        vec![0x7E, 0x10, 0x01, 0x27],
+        vec![0x7E, 0x10, 0x02, 0x27],
+        vec![0x7E, 0x10, 0x03, 0x27],
+        vec![0x7E, 0x10, 0x04, 0x27],
+    ];
+
+    assert!(
+        babelfish::fields::is_incrementing_byte(
+            &frames,
+            2,
+        )
+    );
+
+    assert!(
+        !babelfish::fields::is_incrementing_byte(
+            &frames,
+            3,
+        )
+    );
+}
+#[test]
+fn detects_cyclic_byte_field() {
+    let frames = vec![
+        vec![0x7E, 0x00],
+        vec![0x7E, 0x01],
+        vec![0x7E, 0x02],
+        vec![0x7E, 0x00],
+        vec![0x7E, 0x01],
+        vec![0x7E, 0x02],
+    ];
+
+    assert!(
+        babelfish::fields::is_cyclic_byte(
+            &frames,
+            1,
+            3,
+        )
+    );
+
+    assert!(
+        !babelfish::fields::is_cyclic_byte(
+            &frames,
+            1,
+            2,
+        )
+    );
+}
+#[test]
+fn infers_constant_and_incrementing_field_hypotheses() {
+    let frames = vec![
+        vec![0x7E, 0x10, 0x01, 0x27],
+        vec![0x7E, 0x10, 0x02, 0x27],
+        vec![0x7E, 0x10, 0x03, 0x27],
+        vec![0x7E, 0x10, 0x04, 0x27],
+    ];
+
+    let constant =
+    babelfish::fields::infer_field_hypothesis(
+        &frames,
+        1,
+        3,
+    )
+    .expect("constant field hypothesis should exist");
+    assert_eq!(
+        constant.kind,
+        babelfish::fields::FieldKind::Constant
+    );
+
+    assert_eq!(constant.unique_values, 1);
+    assert_eq!(constant.min_value, 0x10);
+    assert_eq!(constant.max_value, 0x10);
+
+    let incrementing =
+        babelfish::fields::infer_field_hypothesis(
+            &frames,
+            2,
+            3,
+        )
+        .expect("incrementing field hypothesis should exist");
+
+    assert_eq!(
+        incrementing.kind,
+        babelfish::fields::FieldKind::Incrementing
+    );
+
+    assert_eq!(incrementing.unique_values, 4);
+    assert_eq!(incrementing.min_value, 0x01);
+    assert_eq!(incrementing.max_value, 0x04);
+}
+
+#[test]
+fn infers_cyclic_field_hypothesis() {
+    let frames = vec![
+        vec![0x7E, 0x00],
+        vec![0x7E, 0x01],
+        vec![0x7E, 0x02],
+        vec![0x7E, 0x00],
+        vec![0x7E, 0x01],
+        vec![0x7E, 0x02],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_field_hypothesis(
+            &frames,
+            1,
+            3,
+        )
+        .expect("cyclic field hypothesis should exist");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::FieldKind::Cyclic
+    );
+}
+#[test]
+fn infers_all_field_hypotheses() {
+    let frames = vec![
+        vec![0x7E, 0x10, 0x01, 0x27],
+        vec![0x7E, 0x10, 0x02, 0x27],
+        vec![0x7E, 0x10, 0x03, 0x27],
+        vec![0x7E, 0x10, 0x04, 0x27],
+    ];
+
+    let fields =
+        babelfish::fields::infer_fields(
+            &frames,
+            0,
+            4,
+        );
+
+    assert_eq!(fields.len(), 4);
+
+    assert_eq!(
+        fields[0].kind,
+        babelfish::fields::FieldKind::Constant
+    );
+
+    assert_eq!(
+        fields[1].kind,
+        babelfish::fields::FieldKind::Constant
+    );
+
+    assert_eq!(
+        fields[2].kind,
+        babelfish::fields::FieldKind::Incrementing
+    );
+
+    assert_eq!(
+        fields[3].kind,
+        babelfish::fields::FieldKind::Constant
+    );
+}
+#[test]
+fn protocol_hypothesis_contains_field_hypotheses() {
+    let crc = Crc8;
+
+    let mut frames = Vec::new();
+
+    for i in 0u8..20 {
+        let data = vec![
+            0x10, // constant
+            i,    // incrementing
+            0x27, // constant
+        ];
+
+        let checksum = crc.calculate(&data);
+
+        let mut frame = vec![0x7E];
+        frame.extend_from_slice(&data);
+        frame.push(checksum as u8);
+
+        frames.push(frame);
+    }
+
+    let framing = babelfish::framing::FramingCandidate {
+        prefix: vec![0x7E],
+        frame_count: frames.len(),
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 20,
+        checksum_total_frames: 20,
+    };
+
+    let hypothesis =
+        babelfish::hypothesis::build_hypothesis(
+            framing,
+            &frames,
+        )
+        .expect("protocol hypothesis should exist");
+
+    assert_eq!(hypothesis.fields.len(), 3);
+
+    assert_eq!(
+        hypothesis.fields[0].kind,
+        babelfish::fields::FieldKind::Constant
+    );
+
+    assert_eq!(
+        hypothesis.fields[1].kind,
+        babelfish::fields::FieldKind::Incrementing
+    );
+
+    assert_eq!(
+        hypothesis.fields[2].kind,
+        babelfish::fields::FieldKind::Constant
+    );
+}
+
+#[test]
+fn detects_linear_byte_pattern() {
+    let frames = vec![
+        vec![0x10, 0x00],
+        vec![0x10, 0x03],
+        vec![0x10, 0x06],
+        vec![0x10, 0x09],
+    ];
+
+    let step =
+        babelfish::fields::detect_linear_byte_pattern(
+            &frames,
+            1,
+        );
+
+    assert_eq!(step, Some(3));
+}
+
+#[test]
+fn infers_linear_field_hypothesis() {
+    let frames = vec![
+        vec![0x10, 0x00],
+        vec![0x10, 0x03],
+        vec![0x10, 0x06],
+        vec![0x10, 0x09],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_field_hypothesis(
+            &frames,
+            1,
+            3,
+        )
+        .expect("linear field hypothesis should exist");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::FieldKind::Linear
+    );
+
+    assert_eq!(hypothesis.linear_step, Some(3));
+    assert_eq!(hypothesis.unique_values, 4);
+    assert_eq!(hypothesis.min_value, 0x00);
+    assert_eq!(hypothesis.max_value, 0x09);
+}
+#[test]
+fn detects_length_field() {
+    let frames = vec![
+        // 7E | length | payload (3 bytes)
+        vec![0x7E, 0x03, 0xAA, 0xBB, 0xCC, 0x00],
+        vec![0x7E, 0x03, 0x10, 0x20, 0x30, 0x00],
+        vec![0x7E, 0x03, 0x01, 0x02, 0x03, 0x00],
+    ];
+
+    let detected =
+        babelfish::fields::is_length_field(
+            &frames,
+            1,
+            5,
+        );
+
+    assert!(detected);
+}
+#[test]
+fn infers_length_field_hypothesis() {
+    let frames = vec![
+        // 7E | length | payload | checksum
+        vec![0x7E, 0x03, 0xAA, 0xBB, 0xCC, 0x00],
+        vec![0x7E, 0x03, 0x10, 0x20, 0x30, 0x00],
+        vec![0x7E, 0x03, 0x01, 0x02, 0x03, 0x00],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_field_hypothesis(
+            &frames,
+            1,
+            5,
+        )
+        .expect("length field hypothesis should exist");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::FieldKind::Length
+    );
+
+    assert_eq!(hypothesis.unique_values, 1);
+    assert_eq!(hypothesis.min_value, 0x03);
+    assert_eq!(hypothesis.max_value, 0x03);
 }
