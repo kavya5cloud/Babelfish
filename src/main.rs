@@ -1,20 +1,13 @@
+use babelfish::checksum::search::rank_candidates;
+use babelfish::framing::{FramingKind, best_framing_candidate};
+use babelfish::generator::generate_rust;
+use babelfish::input::{parse_hex_file, parse_hex_stream_file};
+use babelfish::model::ProtocolModel;
 use std::env;
 use std::process;
 
-use babelfish::checksum::search::rank_candidates;
-use babelfish::framing::{
-    best_framing_candidate,
-    FramingKind,
-};
-use babelfish::input::{
-    parse_hex_file,
-    parse_hex_stream_file,
-};
-
 fn print_checksum_candidates(frames: &[Vec<u8>]) {
-    let candidates = rank_candidates(
-        babelfish::checksum::search::search_algorithms(frames),
-    );
+    let candidates = rank_candidates(babelfish::checksum::search::search_algorithms(frames));
 
     println!("Frames: {}", frames.len());
     println!();
@@ -35,9 +28,7 @@ fn print_checksum_candidates(frames: &[Vec<u8>]) {
             candidate.failed_frames.len(),
         );
 
-        if !candidate.is_proven()
-            && !candidate.failed_frames.is_empty()
-        {
+        if !candidate.is_proven() && !candidate.failed_frames.is_empty() {
             let preview: Vec<String> = candidate
                 .failed_frames
                 .iter()
@@ -95,50 +86,31 @@ fn print_framing_kind(kind: &FramingKind) {
             checksum_width,
         } => {
             println!("  type: length");
-            println!(
-                "  length field: byte {}",
-                length_offset
-            );
-            println!(
-                "  payload starts: byte {}",
-                payload_offset
-            );
-            println!(
-                "  checksum width: {} byte(s)",
-                checksum_width
-            );
+            println!("  length field: byte {}", length_offset);
+            println!("  payload starts: byte {}", payload_offset);
+            println!("  checksum width: {} byte(s)", checksum_width);
         }
     }
 }
 
-fn frames_from_framing(
-    stream: &[u8],
-    kind: &FramingKind,
-) -> Vec<Vec<u8>> {
+fn frames_from_framing(stream: &[u8], kind: &FramingKind) -> Vec<Vec<u8>> {
     match kind {
-        FramingKind::Prefix(prefix) => {
-            babelfish::framing::split_on_prefix(
-                stream,
-                prefix,
-            )
-        }
+        FramingKind::Prefix(prefix) => babelfish::framing::split_on_prefix(stream, prefix),
 
         FramingKind::Length {
             length_offset,
             payload_offset,
             checksum_width,
-        } => {
-            babelfish::framing::split_on_length_field(
-                stream,
-                *length_offset,
-                *payload_offset,
-                *checksum_width,
-            )
-        }
+        } => babelfish::framing::split_on_length_field(
+            stream,
+            *length_offset,
+            *payload_offset,
+            *checksum_width,
+        ),
     }
 }
 
-fn crack_stream_file(path: &str) {
+fn crack_stream_file(path: &str, json: bool) {
     let stream = match parse_hex_stream_file(path) {
         Ok(stream) => stream,
         Err(error) => {
@@ -147,45 +119,61 @@ fn crack_stream_file(path: &str) {
         }
     };
 
-    println!("Babelfish 🐟");
-    println!();
-    println!("Raw stream bytes: {}", stream.len());
-    println!();
-
-    let framing = match best_framing_candidate(
-        &stream,
-        1,
-        3,
-    ) {
+    let framing = match best_framing_candidate(&stream, 1, 3) {
         Some(candidate) => candidate,
         None => {
-            eprintln!(
-                "Could not find a framing hypothesis."
-            );
+            eprintln!("Could not find a framing hypothesis.");
             process::exit(1);
         }
     };
 
+    let frames = frames_from_framing(&stream, &framing.kind);
+
+    let hypothesis = match babelfish::hypothesis::build_hypothesis(framing.clone(), &frames) {
+        Some(hypothesis) => hypothesis,
+
+        None => {
+            eprintln!("Could not build a protocol hypothesis.");
+            process::exit(1);
+        }
+    };
+
+    let model = ProtocolModel::from_hypothesis(&hypothesis);
+
+    if json {
+        match serde_json::to_string_pretty(&model) {
+            Ok(output) => {
+                println!("{output}");
+            }
+            Err(error) => {
+                eprintln!("Could not serialize protocol model: {error}");
+                process::exit(1);
+            }
+        }
+
+        return;
+    }
+
+    println!("Babelfish 🐟");
+    println!();
+    println!("Raw stream bytes: {}", stream.len());
+    println!();
+    println!();
+    println!("Raw stream bytes: {}", stream.len());
+    println!();
+
     println!("Best framing candidate:");
     print_framing_kind(&framing.kind);
 
-    println!(
-        "  frames: {}",
-        framing.frame_count
-    );
+    println!("  frames: {}", framing.frame_count);
 
     match &framing.checksum_algorithm {
         Some(algorithm) => {
-            println!(
-                "  checksum: {}",
-                algorithm
-            );
+            println!("  checksum: {}", algorithm);
         }
 
         None => {
-            println!(
-                "  checksum: unknown"
-            );
+            println!("  checksum: unknown");
         }
     }
 
@@ -196,47 +184,40 @@ fn crack_stream_file(path: &str) {
         framing.checksum_validation_rate() * 100.0,
     );
 
-    println!(
-        "  confidence: {:.2}",
-        framing.confidence()
-    );
+    println!("  confidence: {:.2}", framing.confidence());
 
-    println!(
-        "  verdict: {}",
-        framing.verdict()
-    );
+    println!("  verdict: {}", framing.verdict());
 
     println!();
 
-    let frames =
-        frames_from_framing(
-            &stream,
-            &framing.kind,
-        );
+    let hypothesis = match babelfish::hypothesis::build_hypothesis(framing, &frames) {
+        Some(hypothesis) => hypothesis,
 
-    let hypothesis =
-        match babelfish::hypothesis::build_hypothesis(
-            framing,
-            &frames,
-        ) {
-            Some(hypothesis) => hypothesis,
+        None => {
+            eprintln!("Could not build a protocol hypothesis.");
+            process::exit(1);
+        }
+    };
 
-            None => {
-                eprintln!(
-                    "Could not build a protocol hypothesis."
-                );
+    if json {
+        match serde_json::to_string_pretty(&model) {
+            Ok(output) => {
+                println!("{output}");
+            }
+            Err(error) => {
+                eprintln!("Could not serialize protocol model: {error}");
                 process::exit(1);
             }
-        };
+        }
+
+        return;
+    }
 
     println!("Protocol hypothesis:");
 
     match &hypothesis.framing.kind {
         FramingKind::Prefix(prefix) => {
-            println!(
-                "  framing: prefix {:02X?}",
-                prefix
-            );
+            println!("  framing: prefix {:02X?}", prefix);
         }
 
         FramingKind::Length {
@@ -244,41 +225,24 @@ fn crack_stream_file(path: &str) {
             payload_offset,
             checksum_width,
         } => {
-            println!(
-                "  framing: length byte {}",
-                length_offset
-            );
-            println!(
-                "  payload starts: byte {}",
-                payload_offset
-            );
-            println!(
-                "  checksum width: {} byte(s)",
-                checksum_width
-            );
+            println!("  framing: length byte {}", length_offset);
+            println!("  payload starts: byte {}", payload_offset);
+            println!("  checksum width: {} byte(s)", checksum_width);
         }
     }
 
-    println!(
-        "  frames: {}",
-        hypothesis.framing.frame_count
-    );
+    println!("  frames: {}", hypothesis.framing.frame_count);
 
-    println!(
-        "  checksum: {}",
-        hypothesis.checksum.algorithm.name()
-    );
+    println!("  checksum: {}", hypothesis.checksum.algorithm.name());
 
     println!(
         "  coverage: bytes[{}..{}]",
-        hypothesis.checksum.coverage_start,
-        hypothesis.checksum.coverage_end
+        hypothesis.checksum.coverage_start, hypothesis.checksum.coverage_end
     );
 
     println!(
         "  checksum: bytes[{}..{}]",
-        hypothesis.checksum.checksum_start,
-        hypothesis.checksum.checksum_end
+        hypothesis.checksum.checksum_start, hypothesis.checksum.checksum_end
     );
 
     println!(
@@ -288,53 +252,53 @@ fn crack_stream_file(path: &str) {
         hypothesis.validation_rate() * 100.0
     );
 
+    println!("  confidence: {:.2}", hypothesis.confidence());
+
+    println!("  verdict: {}", hypothesis.verdict());
+    println!();
+    println!("Evidence:");
+
+    let report = &model.evidence;
+
+    for item in &report.items {
+        println!(
+            "  [{:<10}] {}  score: {:.2}",
+            item.category, item.statement, item.score
+        );
+    }
+
+    println!();
+
+    println!("Evidence strength: {:.2}", report.evidence_strength);
+
     println!(
-        "  confidence: {:.2}",
-        hypothesis.confidence()
+        "Interpretation confidence: {:.2}",
+        report.interpretation_confidence
     );
 
     println!(
-        "  verdict: {}",
-        hypothesis.verdict()
+        "Interpretation: {}",
+        if report.ambiguous {
+            "AMBIGUOUS"
+        } else {
+            "UNAMBIGUOUS"
+        }
     );
 
     println!();
     println!("Fields:");
 
     for field in &hypothesis.fields {
-        match field.kind {
-            babelfish::fields::FieldKind::Length => {
-                println!(
-                    "  byte {:<3} Length       unique: {:<4} range: 0x{:02X}..0x{:02X}",
-                    field.position,
-                    field.unique_values,
-                    field.min_value,
-                    field.max_value,
-                );
-            }
+        println!(
+            "  byte {:<3} {:<12} unique: {:<4} range: 0x{:02X}..0x{:02X}",
+            field.position,
+            format!("{:?}", field.kind),
+            field.unique_values,
+            field.min_value,
+            field.max_value,
+        );
 
-            babelfish::fields::FieldKind::Linear => {
-                println!(
-                    "  byte {:<3} Linear       step: {:+}  unique: {:<4} range: 0x{:02X}..0x{:02X}",
-                    field.position,
-                    field.linear_step.unwrap_or(0),
-                    field.unique_values,
-                    field.min_value,
-                    field.max_value,
-                );
-            }
-
-            _ => {
-                println!(
-                    "  byte {:<3} {:<12} unique: {:<4} range: 0x{:02X}..0x{:02X}",
-                    field.position,
-                    format!("{:?}", field.kind),
-                    field.unique_values,
-                    field.min_value,
-                    field.max_value,
-                );
-            }
-        }
+        println!("             interpretation: {:?}", field.interpretation());
     }
 
     if !hypothesis.multi_byte_fields.is_empty() {
@@ -353,64 +317,131 @@ fn crack_stream_file(path: &str) {
                 field.is_incrementing,
             );
         }
-    }
 
-    let ambiguous =
-        hypothesis.ambiguous_multi_byte_fields();
+        let ambiguous = hypothesis.ambiguous_multi_byte_fields();
 
-    if ambiguous.len() > 1 {
-        println!();
-        println!("Multi-byte ambiguity:");
+        if ambiguous.len() > 1 {
+            println!();
+            println!("Multi-byte interpretation:");
 
-        for field in &ambiguous {
-            println!(
-                "  bytes[{}..{}]  {:?}  score: {:.2}",
-                field.start,
-                field.start + field.width,
-                field.kind,
-                field.score(),
-            );
+            for (index, field) in ambiguous.iter().enumerate() {
+                let interpretation = field.interpretation();
+
+                println!();
+                println!("  Candidate {}:", index + 1);
+                println!(
+                    "    bytes[{}..{}]",
+                    interpretation.start,
+                    interpretation.start + interpretation.width
+                );
+                println!("    type: {}", interpretation.kind);
+                println!(
+                    "    range: {}..{}",
+                    interpretation.min_value, interpretation.max_value
+                );
+                println!("    incrementing: {}", interpretation.is_incrementing);
+                println!("    evidence: {:.2}", interpretation.score as f64 / 100.0);
+            }
+
+            println!();
+            println!("  Conclusion:");
+            println!("    Byte order cannot be determined from this capture.");
+            println!("    Both candidates explain the observed frames equally well.");
         }
-
-        println!(
-            "  multiple interpretations have equal evidence."
-        );
     }
-}
-
-fn print_usage() {
-    eprintln!(
-        "Usage:\n  \
-         babelfish crack <capture.txt>\n  \
-         babelfish crack-stream <stream.txt>"
-    );
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 3 {
+    if args.len() < 3 || args.len() > 5 {
         print_usage();
         process::exit(1);
     }
 
     match args[1].as_str() {
         "crack" => {
+            if args.len() != 3 {
+                print_usage();
+                process::exit(1);
+            }
+
             crack_framed_file(&args[2]);
         }
 
         "crack-stream" => {
-            crack_stream_file(&args[2]);
+            let json = args.get(3).map(|arg| arg == "--json").unwrap_or(false);
+
+            if args.len() == 4 && !json {
+                eprintln!("Unknown option '{}'.", args[3]);
+                print_usage();
+                process::exit(1);
+            }
+
+            if args.len() != 3 && args.len() != 4 {
+                print_usage();
+                process::exit(1);
+            }
+
+            crack_stream_file(&args[2], json);
+        }
+
+        "generate" => {
+            if args.len() != 5 || args[3] != "--lang" {
+                print_usage();
+                process::exit(1);
+            }
+
+            if args[4] != "rust" {
+                eprintln!("Unsupported language '{}'.", args[4]);
+                eprintln!("Currently supported: rust");
+                process::exit(1);
+            }
+
+            let stream = match parse_hex_stream_file(&args[2]) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    process::exit(1);
+                }
+            };
+
+            let framing = match best_framing_candidate(&stream, 1, 3) {
+                Some(candidate) => candidate,
+                None => {
+                    eprintln!("Could not find a framing hypothesis.");
+                    process::exit(1);
+                }
+            };
+
+            let frames = frames_from_framing(&stream, &framing.kind);
+
+            let hypothesis = match babelfish::hypothesis::build_hypothesis(framing, &frames) {
+                Some(hypothesis) => hypothesis,
+                None => {
+                    eprintln!("Could not build a protocol hypothesis.");
+                    process::exit(1);
+                }
+            };
+
+            let model = ProtocolModel::from_hypothesis(&hypothesis);
+            let generated = generate_rust(&model, &frames);
+
+            println!("{generated}");
         }
 
         _ => {
-            eprintln!(
-                "Unknown command '{}'.",
-                args[1]
-            );
+            eprintln!("Unknown command '{}'.", args[1]);
             eprintln!();
             print_usage();
             process::exit(1);
         }
     }
+}
+
+fn print_usage() {
+    eprintln!("Usage:");
+    eprintln!("  babelfish crack <hex-file>");
+    eprintln!("  babelfish crack-stream <hex-stream-file> [--json]");
+    eprintln!("  babelfish generate <hex-stream-file> --lang rust");
 }

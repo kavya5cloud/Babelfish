@@ -50,8 +50,7 @@ impl ChecksumCandidate {
 
         let validation_rate = self.validation_rate();
 
-        let evidence_factor =
-            1.0 - (-((self.total_frames as f64) / 20.0)).exp();
+        let evidence_factor = 1.0 - (-((self.total_frames as f64) / 20.0)).exp();
 
         validation_rate * evidence_factor
     }
@@ -87,7 +86,6 @@ impl Checksum for XorChecksum {
     }
 
     fn calculate(&self, data: &[u8]) -> u32 {
-        data.iter()
-            .fold(0u8, |acc, &byte| acc ^ byte) as u32
+        data.iter().fold(0u8, |acc, &byte| acc ^ byte) as u32
     }
 }

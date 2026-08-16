@@ -12,9 +12,7 @@ impl Checksum for Sum8 {
     }
 
     fn calculate(&self, data: &[u8]) -> u32 {
-        data.iter()
-            .fold(0u8, |acc, &byte| acc.wrapping_add(byte))
-            as u32
+        data.iter().fold(0u8, |acc, &byte| acc.wrapping_add(byte)) as u32
     }
 }
 pub struct Sum16;
@@ -30,8 +28,6 @@ impl Checksum for Sum16 {
 
     fn calculate(&self, data: &[u8]) -> u32 {
         data.iter()
-            .fold(0u16, |acc, &byte| {
-                acc.wrapping_add(byte as u16)
-            }) as u32
+            .fold(0u16, |acc, &byte| acc.wrapping_add(byte as u16)) as u32
     }
 }
