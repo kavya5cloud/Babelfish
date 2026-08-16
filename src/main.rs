@@ -2,7 +2,10 @@ use std::env;
 use std::process;
 
 use babelfish::checksum::search::rank_candidates;
-use babelfish::framing::best_framing_candidate;
+use babelfish::framing::{
+    best_framing_candidate,
+    FramingKind,
+};
 use babelfish::input::{
     parse_hex_file,
     parse_hex_stream_file,
@@ -79,6 +82,62 @@ fn crack_framed_file(path: &str) {
     print_checksum_candidates(&frames);
 }
 
+fn print_framing_kind(kind: &FramingKind) {
+    match kind {
+        FramingKind::Prefix(prefix) => {
+            println!("  type: prefix");
+            println!("  prefix: {:02X?}", prefix);
+        }
+
+        FramingKind::Length {
+            length_offset,
+            payload_offset,
+            checksum_width,
+        } => {
+            println!("  type: length");
+            println!(
+                "  length field: byte {}",
+                length_offset
+            );
+            println!(
+                "  payload starts: byte {}",
+                payload_offset
+            );
+            println!(
+                "  checksum width: {} byte(s)",
+                checksum_width
+            );
+        }
+    }
+}
+
+fn frames_from_framing(
+    stream: &[u8],
+    kind: &FramingKind,
+) -> Vec<Vec<u8>> {
+    match kind {
+        FramingKind::Prefix(prefix) => {
+            babelfish::framing::split_on_prefix(
+                stream,
+                prefix,
+            )
+        }
+
+        FramingKind::Length {
+            length_offset,
+            payload_offset,
+            checksum_width,
+        } => {
+            babelfish::framing::split_on_length_field(
+                stream,
+                *length_offset,
+                *payload_offset,
+                *checksum_width,
+            )
+        }
+    }
+}
+
 fn crack_stream_file(path: &str) {
     let stream = match parse_hex_stream_file(path) {
         Ok(stream) => stream,
@@ -91,30 +150,6 @@ fn crack_stream_file(path: &str) {
     println!("Babelfish 🐟");
     println!();
     println!("Raw stream bytes: {}", stream.len());
-    println!();
-
-    // Temporary diagnostic output:
-    // show every framing hypothesis and its score.
-    let framing_candidates =
-        babelfish::framing::build_framing_candidates(
-            &stream,
-            1,
-            3,
-        );
-
-    println!("Framing candidates:");
-
-    for candidate in &framing_candidates {
-        println!(
-            "  prefix: {:02X?}  frames: {:<4} validation: {}/{}  score: {:.4}",
-            candidate.prefix,
-            candidate.frame_count,
-            candidate.checksum_validation_count,
-            candidate.checksum_total_frames,
-            candidate.score(),
-        );
-    }
-
     println!();
 
     let framing = match best_framing_candidate(
@@ -132,10 +167,8 @@ fn crack_stream_file(path: &str) {
     };
 
     println!("Best framing candidate:");
-    println!(
-        "  prefix: {:02X?}",
-        framing.prefix
-    );
+    print_framing_kind(&framing.kind);
+
     println!(
         "  frames: {}",
         framing.frame_count
@@ -148,6 +181,7 @@ fn crack_stream_file(path: &str) {
                 algorithm
             );
         }
+
         None => {
             println!(
                 "  checksum: unknown"
@@ -175,9 +209,9 @@ fn crack_stream_file(path: &str) {
     println!();
 
     let frames =
-        babelfish::framing::split_on_prefix(
+        frames_from_framing(
             &stream,
-            &framing.prefix,
+            &framing.kind,
         );
 
     let hypothesis =
@@ -186,6 +220,7 @@ fn crack_stream_file(path: &str) {
             &frames,
         ) {
             Some(hypothesis) => hypothesis,
+
             None => {
                 eprintln!(
                     "Could not build a protocol hypothesis."
@@ -196,10 +231,33 @@ fn crack_stream_file(path: &str) {
 
     println!("Protocol hypothesis:");
 
-    println!(
-        "  framing prefix: {:02X?}",
-        hypothesis.framing.prefix
-    );
+    match &hypothesis.framing.kind {
+        FramingKind::Prefix(prefix) => {
+            println!(
+                "  framing: prefix {:02X?}",
+                prefix
+            );
+        }
+
+        FramingKind::Length {
+            length_offset,
+            payload_offset,
+            checksum_width,
+        } => {
+            println!(
+                "  framing: length byte {}",
+                length_offset
+            );
+            println!(
+                "  payload starts: byte {}",
+                payload_offset
+            );
+            println!(
+                "  checksum width: {} byte(s)",
+                checksum_width
+            );
+        }
+    }
 
     println!(
         "  frames: {}",

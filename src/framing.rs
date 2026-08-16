@@ -1,7 +1,37 @@
 use crate::checksum::search::best_candidate;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FramingKind {
+    Prefix(Vec<u8>),
+
+    Length {
+        length_offset: usize,
+        payload_offset: usize,
+        checksum_width: usize,
+    },
+}
+
+impl FramingKind {
+    pub fn complexity(&self) -> usize {
+        match self {
+            FramingKind::Prefix(prefix) => prefix.len(),
+
+            FramingKind::Length {
+                length_offset,
+                payload_offset,
+                checksum_width,
+            } => {
+                1 + *length_offset
+                    + *payload_offset
+                    + *checksum_width
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FramingCandidate {
-    pub prefix: Vec<u8>,
+    pub kind: FramingKind,
     pub frame_count: usize,
     pub checksum_algorithm: Option<String>,
     pub checksum_validation_count: usize,
@@ -19,22 +49,25 @@ impl FramingCandidate {
     }
 
     pub fn score(&self) -> f64 {
-        let validation_rate = self.checksum_validation_rate();
+        let validation_rate =
+            self.checksum_validation_rate();
 
         if self.checksum_total_frames == 0 {
             return 0.0;
         }
 
         let evidence_factor =
-            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+            1.0
+                - (-((self.checksum_total_frames as f64) / 20.0))
+                    .exp();
 
         let validation_score =
             validation_rate * evidence_factor;
 
-        let prefix_penalty =
-            self.prefix.len() as f64 * 0.01;
+        let complexity_penalty =
+            self.kind.complexity() as f64 * 0.01;
 
-        validation_score - prefix_penalty
+        validation_score - complexity_penalty
     }
 
     pub fn confidence(&self) -> f64 {
@@ -46,7 +79,9 @@ impl FramingCandidate {
             self.checksum_validation_rate();
 
         let evidence_factor =
-            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+            1.0
+                - (-((self.checksum_total_frames as f64) / 20.0))
+                    .exp();
 
         validation_rate * evidence_factor
     }
@@ -54,7 +89,8 @@ impl FramingCandidate {
     pub fn verdict(&self) -> &'static str {
         let confidence = self.confidence();
 
-        if self.checksum_validation_count == self.checksum_total_frames
+        if self.checksum_validation_count
+            == self.checksum_total_frames
             && self.checksum_total_frames >= 100
         {
             "PROVEN"
@@ -75,8 +111,14 @@ pub fn rank_framing_candidates(
         b.score()
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.prefix.len().cmp(&b.prefix.len()))
-            .then_with(|| b.frame_count.cmp(&a.frame_count))
+            .then_with(|| {
+                a.kind
+                    .complexity()
+                    .cmp(&b.kind.complexity())
+            })
+            .then_with(|| {
+                b.frame_count.cmp(&a.frame_count)
+            })
     });
 
     candidates
@@ -104,18 +146,24 @@ pub fn find_recurring_prefixes(
         let mut candidates = Vec::new();
 
         for start in 0..=stream.len() - length {
-            let sequence = &stream[start..start + length];
+            let sequence =
+                &stream[start..start + length];
 
             let mut occurrences = 0;
 
             for position in 0..=stream.len() - length {
-                if &stream[position..position + length] == sequence {
+                if &stream[position..position + length]
+                    == sequence
+                {
                     occurrences += 1;
                 }
             }
 
             if occurrences >= 2 {
-                candidates.push((sequence.to_vec(), occurrences));
+                candidates.push((
+                    sequence.to_vec(),
+                    occurrences,
+                ));
             }
         }
 
@@ -148,7 +196,10 @@ pub fn split_on_prefix(
         .len()
         .saturating_sub(prefix.len())
     {
-        if &stream[position..position + prefix.len()] == prefix {
+        if &stream[
+            position..position + prefix.len()
+        ] == prefix
+        {
             starts.push(position);
         }
     }
@@ -173,6 +224,54 @@ pub fn split_on_prefix(
     frames
 }
 
+pub fn split_on_length_field(
+    stream: &[u8],
+    length_offset: usize,
+    payload_offset: usize,
+    checksum_width: usize,
+) -> Vec<Vec<u8>> {
+    if stream.is_empty()
+        || length_offset >= stream.len()
+        || payload_offset > stream.len()
+    {
+        return Vec::new();
+    }
+
+    let mut frames = Vec::new();
+    let mut position = 0;
+
+    while position < stream.len() {
+        if position + length_offset >= stream.len() {
+            break;
+        }
+
+        let length =
+            stream[position + length_offset] as usize;
+
+        let frame_len =
+            (payload_offset - length_offset)
+                + length
+                + checksum_width;
+
+        if frame_len == 0
+            || position + frame_len > stream.len()
+        {
+            break;
+        }
+
+        frames.push(
+            stream[
+                position..position + frame_len
+            ]
+            .to_vec(),
+        );
+
+        position += frame_len;
+    }
+
+    frames
+}
+
 pub fn build_framing_candidates(
     stream: &[u8],
     min_prefix_length: usize,
@@ -187,32 +286,34 @@ pub fn build_framing_candidates(
     let candidates = prefixes
         .into_iter()
         .filter_map(|prefix| {
-            let frames = split_on_prefix(stream, &prefix);
+            let frames =
+                split_on_prefix(stream, &prefix);
 
             if frames.len() < 2 {
                 return None;
             }
 
             match best_candidate(&frames) {
-                Some(candidate) => Some(FramingCandidate {
-                    prefix,
-                    frame_count: frames.len(),
-                    checksum_algorithm: Some(
-                        candidate.algorithm.name().to_string(),
-                    ),
-                    checksum_validation_count:
-                        candidate.validation_count,
-                    checksum_total_frames:
-                        candidate.total_frames,
-                }),
+                Some(checksum) => {
+                    Some(FramingCandidate {
+                        kind: FramingKind::Prefix(
+                            prefix,
+                        ),
+                        frame_count: frames.len(),
+                        checksum_algorithm: Some(
+                            checksum
+                                .algorithm
+                                .name()
+                                .to_string(),
+                        ),
+                        checksum_validation_count:
+                            checksum.validation_count,
+                        checksum_total_frames:
+                            checksum.total_frames,
+                    })
+                }
 
-                None => Some(FramingCandidate {
-                    prefix,
-                    frame_count: frames.len(),
-                    checksum_algorithm: None,
-                    checksum_validation_count: 0,
-                    checksum_total_frames: frames.len(),
-                }),
+                None => None,
             }
         })
         .collect();
@@ -225,11 +326,71 @@ pub fn best_framing_candidate(
     min_prefix_length: usize,
     max_prefix_length: usize,
 ) -> Option<FramingCandidate> {
-    let candidates = build_framing_candidates(
+    build_framing_candidates(
         stream,
         min_prefix_length,
         max_prefix_length,
-    );
+    )
+    .into_iter()
+    .next()
+}
 
-    candidates.into_iter().next()
+pub fn infer_length_framing_candidates(
+    stream: &[u8],
+    min_length_offset: usize,
+    max_length_offset: usize,
+    payload_offset: usize,
+    checksum_width: usize,
+) -> Vec<FramingCandidate> {
+    if stream.is_empty()
+        || min_length_offset > max_length_offset
+    {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+
+    for length_offset in
+        min_length_offset..=max_length_offset
+    {
+        let frames = split_on_length_field(
+            stream,
+            length_offset,
+            payload_offset,
+            checksum_width,
+        );
+
+        if frames.len() < 2 {
+            continue;
+        }
+
+        let Some(checksum) =
+            best_candidate(&frames)
+        else {
+            continue;
+        };
+
+        candidates.push(
+            FramingCandidate {
+                kind: FramingKind::Length {
+                    length_offset,
+                    payload_offset,
+                    checksum_width,
+                },
+                frame_count: frames.len(),
+                checksum_algorithm: Some(
+                    checksum
+                        .algorithm
+                        .name()
+                        .to_string(),
+                ),
+                checksum_validation_count:
+                    checksum.validation_count,
+                checksum_total_frames:
+                    checksum.total_frames,
+            },
+        );
+    }
+
+    rank_framing_candidates(candidates)
 }

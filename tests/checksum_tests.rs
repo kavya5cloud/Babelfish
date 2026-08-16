@@ -7,6 +7,7 @@ use babelfish::{
     Sum8,
     Sum16,
 };
+use babelfish::framing::FramingKind;
 
 #[test]
 fn crc16_modbus_known_value() {
@@ -970,7 +971,9 @@ fn builds_framing_candidates_from_raw_stream() {
 
     let candidate = candidates
         .iter()
-        .find(|candidate| candidate.prefix == vec![0x7E])
+        .find(|candidate| {
+    candidate.kind == FramingKind::Prefix(vec![0x7E])
+})
         .expect("0x7E framing candidate should exist");
 
     assert_eq!(candidate.frame_count, 3);
@@ -1013,7 +1016,9 @@ fn framing_candidate_contains_checksum_evidence() {
 
     let candidate = candidates
         .iter()
-        .find(|candidate| candidate.prefix == vec![0x7E])
+        .find(|candidate| {
+    candidate.kind == FramingKind::Prefix(vec![0x7E])
+})
         .expect("0x7E framing candidate should exist");
 
     assert_eq!(candidate.frame_count, 100);
@@ -1032,23 +1037,24 @@ fn ranks_framing_candidates_by_checksum_evidence() {
     use babelfish::framing::{
         rank_framing_candidates,
         FramingCandidate,
+        FramingKind,
     };
 
     let weak = FramingCandidate {
-    prefix: vec![0xAA],
-    frame_count: 100,
-    checksum_algorithm: Some("CRC8".to_string()),
-    checksum_validation_count: 20,
-    checksum_total_frames: 100,
-};
+        kind: FramingKind::Prefix(vec![0xAA]),
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 20,
+        checksum_total_frames: 100,
+    };
 
-let strong = FramingCandidate {
-    prefix: vec![0x7E],
-    frame_count: 100,
-    checksum_algorithm: Some("CRC8".to_string()),
-    checksum_validation_count: 100,
-    checksum_total_frames: 100,
-};
+    let strong = FramingCandidate {
+        kind: FramingKind::Prefix(vec![0x7E]),
+        frame_count: 100,
+        checksum_algorithm: Some("CRC8".to_string()),
+        checksum_validation_count: 100,
+        checksum_total_frames: 100,
+    };
 
     let ranked = rank_framing_candidates(vec![
         weak,
@@ -1056,14 +1062,25 @@ let strong = FramingCandidate {
     ]);
 
     assert_eq!(ranked.len(), 2);
-assert_eq!(ranked[0].prefix, vec![0x7E]);
-assert_eq!(ranked[1].prefix, vec![0xAA]);
-assert!(ranked[0].score() > ranked[1].score());
+
+    assert_eq!(
+        ranked[0].kind,
+        FramingKind::Prefix(vec![0x7E])
+    );
+
+    assert_eq!(
+        ranked[1].kind,
+        FramingKind::Prefix(vec![0xAA])
+    );
+
+    assert!(ranked[0].score() > ranked[1].score());
 }
 
 #[test]
 fn returns_best_framing_candidate() {
-    let crc = Crc8;
+    use babelfish::framing::FramingKind;
+
+let crc = Crc8;
     let mut stream = Vec::new();
 
     for i in 0u8..100 {
@@ -1093,7 +1110,10 @@ fn returns_best_framing_candidate() {
     )
     .expect("a framing candidate should exist");
 
-    assert_eq!(best.prefix, vec![0x7E]);
+    assert_eq!(
+    best.kind,
+    FramingKind::Prefix(vec![0x7E])
+);
     assert_eq!(best.checksum_validation_count, best.checksum_total_frames);
 }   
 
@@ -1136,7 +1156,7 @@ fn framing_candidate_confidence_increases_with_evidence() {
     use babelfish::framing::FramingCandidate;
 
     let weak = FramingCandidate {
-        prefix: vec![0xAA],
+        kind: FramingKind::Prefix(vec![0xAA]),
         frame_count: 10,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 5,
@@ -1144,7 +1164,7 @@ fn framing_candidate_confidence_increases_with_evidence() {
     };
 
     let strong = FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1159,7 +1179,7 @@ fn framing_candidate_verdict_can_be_proven() {
     use babelfish::framing::FramingCandidate;
 
     let candidate = FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1174,7 +1194,7 @@ fn protocol_hypothesis_combines_framing_and_checksum() {
     use babelfish::hypothesis::ProtocolHypothesis;
 
     let framing = babelfish::framing::FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1418,7 +1438,7 @@ fn protocol_hypothesis_contains_field_hypotheses() {
     }
 
     let framing = babelfish::framing::FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: frames.len(),
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 20,
@@ -1748,7 +1768,7 @@ fn prefers_shorter_framing_prefix_when_evidence_ties() {
     };
 
     let short = FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1756,7 +1776,7 @@ fn prefers_shorter_framing_prefix_when_evidence_ties() {
     };
 
     let long = FramingCandidate {
-        prefix: vec![0x7E, 0x10],
+        kind: FramingKind::Prefix(vec![0x7E, 0x10]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1766,8 +1786,14 @@ fn prefers_shorter_framing_prefix_when_evidence_ties() {
     let ranked =
         rank_framing_candidates(vec![long, short]);
 
-    assert_eq!(ranked[0].prefix, vec![0x7E]);
-    assert_eq!(ranked[1].prefix, vec![0x7E, 0x10]);
+    assert_eq!(
+    ranked[0].kind,
+    FramingKind::Prefix(vec![0x7E])
+);
+    assert_eq!(
+    ranked[1].kind,
+    FramingKind::Prefix(vec![0x7E, 0x10])
+);
 
     assert!(ranked[0].score() > ranked[1].score());
 }
@@ -1779,7 +1805,7 @@ fn prefers_more_evidence_when_validation_rate_ties() {
     };
 
     let tiny = FramingCandidate {
-        prefix: vec![0x02],
+        kind: FramingKind::Prefix(vec![0x02]),
         frame_count: 2,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 2,
@@ -1787,7 +1813,7 @@ fn prefers_more_evidence_when_validation_rate_ties() {
     };
 
     let large = FramingCandidate {
-        prefix: vec![0x7E],
+        kind: FramingKind::Prefix(vec![0x7E]),
         frame_count: 100,
         checksum_algorithm: Some("CRC8".to_string()),
         checksum_validation_count: 100,
@@ -1798,12 +1824,198 @@ fn prefers_more_evidence_when_validation_rate_ties() {
         rank_framing_candidates(vec![tiny, large]);
 
     assert_eq!(
-        ranked[0].prefix,
-        vec![0x7E]
-    );
+    ranked[0].kind,
+    FramingKind::Prefix(vec![0x7E])
+);
 
     assert!(
         ranked[0].score()
             > ranked[1].score()
+    );
+}
+#[test]
+fn framing_rejects_sync_byte_inside_payload() {
+    let crc = Crc8;
+
+    let payloads = vec![
+        vec![0x10, 0x20, 0x30],
+        vec![0x10, 0x7E, 0x31],
+        vec![0x10, 0x40, 0x32],
+        vec![0x10, 0x50, 0x33],
+        vec![0x10, 0x60, 0x34],
+    ];
+
+    let mut stream = Vec::new();
+
+    for payload in &payloads {
+        let checksum = crc.calculate(payload) as u8;
+
+        stream.push(0x7E);
+        stream.extend_from_slice(payload);
+        stream.push(checksum);
+    }
+
+    /*
+     * A naïve 0x7E splitter will see the payload 0x7E
+     * and produce an extra frame.
+     */
+    let naive_frames =
+        babelfish::framing::split_on_prefix(
+            &stream,
+            &[0x7E],
+        );
+
+    assert!(
+        naive_frames.len() > payloads.len(),
+        "naive framing should be confused by sync byte in payload"
+    );
+
+    /*
+     * The raw stream nevertheless contains exactly the
+     * expected number of protocol frames.
+     */
+    assert_eq!(payloads.len(), 5);
+
+    /*
+     * This test is intentionally documenting the current
+     * limitation. The next framing engine should use
+     * checksum consistency to reject the naïve split.
+     */
+}
+#[test]
+fn best_framing_candidate_handles_payload_sync_collision() {
+    let crc = Crc8;
+
+    let payloads = vec![
+        vec![0x10, 0x20, 0x30],
+        vec![0x10, 0x7E, 0x31],
+        vec![0x10, 0x40, 0x32],
+        vec![0x10, 0x50, 0x33],
+        vec![0x10, 0x60, 0x34],
+    ];
+
+    let mut stream = Vec::new();
+
+    for payload in &payloads {
+        let checksum = crc.calculate(payload) as u8;
+
+        stream.push(0x7E);
+        stream.extend_from_slice(payload);
+        stream.push(checksum);
+    }
+
+    let best =
+        babelfish::framing::best_framing_candidate(
+            &stream,
+            1,
+            2,
+        )
+        .expect("framing candidate should exist");
+
+    assert_eq!(
+    best.kind,
+    FramingKind::Prefix(vec![0x7E, 0x10])
+);
+    assert_eq!(best.frame_count, 5);
+    assert_eq!(best.checksum_validation_count, 5);
+    assert_eq!(best.checksum_total_frames, 5);
+    assert_eq!(
+        best.checksum_algorithm.as_deref(),
+        Some("CRC8")
+    );
+}
+
+#[test]
+fn splits_stream_using_length_field() {
+    let stream = vec![
+        // length = 3, payload = AA BB CC, checksum = 00
+        0x03, 0xAA, 0xBB, 0xCC, 0x00,
+
+        // length = 5, payload = 10 20 30 40 50, checksum = 00
+        0x05, 0x10, 0x20, 0x30, 0x40, 0x50, 0x00,
+
+        // length = 2, payload = 99 88, checksum = 00
+        0x02, 0x99, 0x88, 0x00,
+    ];
+
+    let frames =
+        babelfish::framing::split_on_length_field(
+            &stream,
+            0,
+            1,
+            1,
+        );
+
+    assert_eq!(frames.len(), 3);
+
+    assert_eq!(
+        frames[0],
+        vec![0x03, 0xAA, 0xBB, 0xCC, 0x00]
+    );
+
+    assert_eq!(
+        frames[1],
+        vec![
+            0x05,
+            0x10,
+            0x20,
+            0x30,
+            0x40,
+            0x50,
+            0x00,
+        ]
+    );
+
+    assert_eq!(
+        frames[2],
+        vec![0x02, 0x99, 0x88, 0x00]
+    );
+}
+#[test]
+fn infers_length_field_framing() {
+    let crc = Crc8;
+
+    let payloads = vec![
+        vec![0xAA, 0xBB, 0xCC],
+        vec![0x10, 0x20, 0x30, 0x40, 0x50],
+        vec![0x99, 0x88],
+    ];
+
+    let mut stream = Vec::new();
+
+    for payload in &payloads {
+        let length = payload.len() as u8;
+        let checksum = crc.calculate(payload) as u8;
+
+        stream.push(length);
+        stream.extend_from_slice(payload);
+        stream.push(checksum);
+    }
+
+    let candidates =
+        babelfish::framing::infer_length_framing_candidates(
+            &stream,
+            0,
+            0,
+            1,
+            1,
+        );
+
+    assert!(!candidates.is_empty());
+
+    let best = &candidates[0];
+
+    assert_eq!(best.frame_count, 3);
+    assert_eq!(
+        best.checksum_algorithm.as_deref(),
+        Some("CRC8")
+    );
+    assert_eq!(
+        best.checksum_validation_count,
+        3
+    );
+    assert_eq!(
+        best.checksum_total_frames,
+        3
     );
 }
