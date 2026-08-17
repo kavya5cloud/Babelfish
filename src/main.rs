@@ -398,23 +398,35 @@ fn main() {
                 process::exit(1);
             }
 
-            let stream = match parse_hex_stream_file(&args[2]) {
-                Ok(stream) => stream,
+            // `generate` operates on an already-framed hex capture:
+            //
+            //   01 00 00 0A 81 DF
+            //   01 01 03 0B 11 2F
+            //   ...
+            //
+            // parse_hex_file() preserves each line as a frame.
+            let frames = match parse_hex_file(&args[2]) {
+                Ok(frames) => frames,
                 Err(error) => {
                     eprintln!("Error: {error}");
                     process::exit(1);
                 }
             };
 
-            let framing = match best_framing_candidate(&stream, 1, 3) {
-                Some(candidate) => candidate,
-                None => {
-                    eprintln!("Could not find a framing hypothesis.");
-                    process::exit(1);
-                }
-            };
+            if frames.is_empty() {
+                eprintln!("No frames found.");
+                process::exit(1);
+            }
 
-            let frames = frames_from_framing(&stream, &framing.kind);
+            // These frames are already delimited by the input file.
+            // Do not run raw-stream framing detection here.
+            let framing = babelfish::framing::FramingCandidate {
+                kind: babelfish::framing::FramingKind::Prefix(Vec::new()),
+                frame_count: frames.len(),
+                checksum_algorithm: None,
+                checksum_validation_count: 0,
+                checksum_total_frames: frames.len(),
+            };
 
             let hypothesis = match babelfish::hypothesis::build_hypothesis(framing, &frames) {
                 Some(hypothesis) => hypothesis,
@@ -443,5 +455,5 @@ fn print_usage() {
     eprintln!("Usage:");
     eprintln!("  babelfish crack <hex-file>");
     eprintln!("  babelfish crack-stream <hex-stream-file> [--json]");
-    eprintln!("  babelfish generate <hex-stream-file> --lang rust");
+    eprintln!("  babelfish generate <hex-file> --lang rust");
 }

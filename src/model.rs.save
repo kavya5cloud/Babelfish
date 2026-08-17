@@ -1,0 +1,73 @@
+^R
+use crate::evidence::EvidenceReport;
+use crate::fields::{
+    FieldInterpretation,
+    MultiByteInterpretation,
+};
+use crate::hypothesis::ProtocolHypothesis;
+
+#[derive(Debug, Clone)]
+pub struct ProtocolModel {
+    pub framing: String,
+    pub checksum: String,
+    pub fields: Vec<FieldInterpretation>,
+    pub multi_byte_fields: Vec<MultiByteInterpretation>,
+    pub evidence: EvidenceReport,
+}
+
+impl ProtocolModel {
+    pub fn from_hypothesis(
+        hypothesis: &ProtocolHypothesis,
+    ) -> Self {
+        let fields = hypothesis
+            .fields
+            .iter()
+            .map(|field| field.interpretation())
+            .collect();
+
+        let multi_byte_fields = hypothesis
+            .multi_byte_fields
+            .iter()
+            .map(|field| field.interpretation())
+            .collect();
+
+        let framing = match &hypothesis.framing.kind {
+            crate::framing::FramingKind::Prefix(prefix) => {
+                format!("prefix {:02X?}", prefix)
+            }
+
+            crate::framing::FramingKind::Length {
+                length_offset,
+                payload_offset,
+                checksum_width,
+            } => {
+                format!(
+                    "length byte {}, payload {}, checksum {} byte(s)",
+                    length_offset,
+                    payload_offset,
+                    checksum_width
+                )
+            }
+        };
+
+        let checksum = format!(
+            "{} bytes[{}..{}]",
+            hypothesis.checksum.algorithm.name(),
+            hypothesis.checksum.checksum_start,
+            hypothesis.checksum.checksum_end
+        );
+
+        let evidence =
+            EvidenceReport::from_hypothesis(hypothesis);
+
+        Self {
+            framing,
+            checksum,
+            fields,
+            multi_byte_fields,
+            evidence,
+        }
+    }
+}
+^X
+

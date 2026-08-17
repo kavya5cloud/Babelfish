@@ -10,15 +10,11 @@ pub struct EvidenceItem {
 #[derive(Debug, Clone, Serialize)]
 pub struct EvidenceReport {
     pub items: Vec<EvidenceItem>,
+    pub overall: f64,
 
-    /// Strength of the observations found in the data.
+    // Backwards-compatible evidence metrics.
     pub evidence_strength: f64,
-
-    /// Confidence that the current protocol interpretation
-    /// is the unique/best explanation.
     pub interpretation_confidence: f64,
-
-    /// Whether competing interpretations remain.
     pub ambiguous: bool,
 }
 
@@ -71,24 +67,54 @@ impl EvidenceReport {
             });
         }
 
-        let evidence_strength = if items.is_empty() {
+        let overall = if items.is_empty() {
             0.0
         } else {
             items.iter().map(|item| item.score).sum::<f64>() / items.len() as f64
         };
 
-        let ambiguous = hypothesis.ambiguous_multi_byte_fields().len() > 1;
+        // Preserve the original interpretation semantics expected by
+        // main.rs and the existing test suite.
+        let evidence_strength = overall;
 
-        let interpretation_confidence = if ambiguous {
-            // Strong evidence exists, but there is no
-            // unique multi-byte interpretation.
-            evidence_strength * 0.75
+        let interpretation_confidence = if hypothesis.multi_byte_fields.is_empty() {
+            overall
         } else {
-            evidence_strength
+            let best = hypothesis
+                .multi_byte_fields
+                .iter()
+                .map(|field| field.score())
+                .fold(0.0_f64, f64::max);
+
+            let second = hypothesis
+                .multi_byte_fields
+                .iter()
+                .map(|field| field.score())
+                .filter(|score| *score < best)
+                .fold(0.0_f64, f64::max);
+
+            if best > 0.0 && second > 0.0 {
+                second / best
+            } else {
+                overall
+            }
+        };
+
+        let ambiguous = hypothesis.multi_byte_fields.len() > 1 && {
+            let mut scores: Vec<f64> = hypothesis
+                .multi_byte_fields
+                .iter()
+                .map(|field| field.score())
+                .collect();
+
+            scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+            scores.len() >= 2 && (scores[0] - scores[1]).abs() < 0.000_001
         };
 
         Self {
             items,
+            overall,
             evidence_strength,
             interpretation_confidence,
             ambiguous,
