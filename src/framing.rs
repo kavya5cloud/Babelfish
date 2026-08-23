@@ -145,7 +145,6 @@ pub fn find_recurring_prefixes(
 
     results
 }
-
 pub fn split_on_prefix(stream: &[u8], prefix: &[u8]) -> Vec<Vec<u8>> {
     if stream.is_empty() || prefix.is_empty() {
         return Vec::new();
@@ -178,7 +177,6 @@ pub fn split_on_prefix(stream: &[u8], prefix: &[u8]) -> Vec<Vec<u8>> {
 
     frames
 }
-
 pub fn split_on_length_field(
     stream: &[u8],
     length_offset: usize,
@@ -220,28 +218,68 @@ pub fn build_framing_candidates(
 ) -> Vec<FramingCandidate> {
     let prefixes = find_recurring_prefixes(stream, min_prefix_length, max_prefix_length);
 
-    let candidates = prefixes
-        .into_iter()
-        .filter_map(|prefix| {
-            let frames = split_on_prefix(stream, &prefix);
+    let mut candidates = Vec::new();
 
-            if frames.len() < 2 {
-                return None;
+    for prefix in prefixes {
+        let frames = split_on_prefix(stream, &prefix);
+
+        if frames.len() < 2 {
+            continue;
+        }
+
+        // First evaluate the natural prefix split.
+        if let Some(checksum) = best_candidate(&frames) {
+            candidates.push(FramingCandidate {
+                kind: FramingKind::Prefix(prefix.clone()),
+                frame_count: frames.len(),
+                checksum_algorithm: Some(checksum.algorithm.name().to_string()),
+                checksum_validation_count: checksum.validation_count,
+                checksum_total_frames: checksum.total_frames,
+            });
+        }
+
+        // A recurring prefix can occur inside payload data. When that
+        // happens, prefix splitting produces false boundaries. Try
+        // fixed-width frames whose first byte(s) match the prefix and
+        // whose widths evenly divide the stream.
+        let prefix_len = prefix.len();
+
+        if stream.len() % 2 != 0 {
+            continue;
+        }
+
+        for frame_len in (prefix_len + 1)..=stream.len() {
+            if stream.len() % frame_len != 0 {
+                continue;
             }
 
-            match best_candidate(&frames) {
-                Some(checksum) => Some(FramingCandidate {
-                    kind: FramingKind::Prefix(prefix),
-                    frame_count: frames.len(),
-                    checksum_algorithm: Some(checksum.algorithm.name().to_string()),
-                    checksum_validation_count: checksum.validation_count,
-                    checksum_total_frames: checksum.total_frames,
-                }),
-
-                None => None,
+            if stream.len() / frame_len < 2 {
+                continue;
             }
-        })
-        .collect();
+
+            let fixed_frames: Vec<Vec<u8>> = stream
+                .chunks_exact(frame_len)
+                .filter(|frame| frame.starts_with(&prefix))
+                .map(|frame| frame.to_vec())
+                .collect();
+
+            if fixed_frames.len() != stream.len() / frame_len {
+                continue;
+            }
+
+            let Some(checksum) = best_candidate(&fixed_frames) else {
+                continue;
+            };
+
+            candidates.push(FramingCandidate {
+                kind: FramingKind::Prefix(prefix.clone()),
+                frame_count: fixed_frames.len(),
+                checksum_algorithm: Some(checksum.algorithm.name().to_string()),
+                checksum_validation_count: checksum.validation_count,
+                checksum_total_frames: checksum.total_frames,
+            });
+        }
+    }
 
     rank_framing_candidates(candidates)
 }

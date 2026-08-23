@@ -95,7 +95,44 @@ fn print_framing_kind(kind: &FramingKind) {
 
 fn frames_from_framing(stream: &[u8], kind: &FramingKind) -> Vec<Vec<u8>> {
     match kind {
-        FramingKind::Prefix(prefix) => babelfish::framing::split_on_prefix(stream, prefix),
+        FramingKind::Prefix(prefix) => {
+            // First try fixed-width framing. This handles the case where
+            // the sync prefix also occurs inside payload data.
+            //
+            // Only accept a width when:
+            //   1. the stream divides evenly into frames,
+            //   2. every frame starts with the detected prefix, and
+            //   3. the resulting frames have a valid checksum candidate.
+            for frame_len in (prefix.len() + 1)..=stream.len() {
+                if stream.len() % frame_len != 0 {
+                    continue;
+                }
+
+                let frame_count = stream.len() / frame_len;
+
+                if frame_count < 2 {
+                    continue;
+                }
+
+                let frames: Vec<Vec<u8>> = stream
+                    .chunks_exact(frame_len)
+                    .filter(|frame| frame.starts_with(prefix))
+                    .map(|frame| frame.to_vec())
+                    .collect();
+
+                if frames.len() != frame_count {
+                    continue;
+                }
+
+                if babelfish::checksum::search::best_candidate(&frames).is_some() {
+                    return frames;
+                }
+            }
+
+            // Fall back to normal prefix splitting for protocols where
+            // fixed-width framing cannot be established.
+            babelfish::framing::split_on_prefix(stream, prefix)
+        }
 
         FramingKind::Length {
             length_offset,
@@ -158,8 +195,6 @@ fn crack_stream_file(path: &str, json: bool) {
     println!();
     println!("Raw stream bytes: {}", stream.len());
     println!();
-    println!();
-    println!("Raw stream bytes: {}", stream.len());
     println!();
 
     println!("Best framing candidate:");
@@ -267,18 +302,13 @@ fn crack_stream_file(path: &str, json: bool) {
         );
     }
 
-    println!();
+    println!("Evidence strength: {:.2}", report.overall);
 
-    println!("Evidence strength: {:.2}", report.evidence_strength);
-
-    println!(
-        "Interpretation confidence: {:.2}",
-        report.interpretation_confidence
-    );
+    let ambiguous = hypothesis.ambiguous_multi_byte_fields();
 
     println!(
         "Interpretation: {}",
-        if report.ambiguous {
+        if ambiguous.len() > 1 {
             "AMBIGUOUS"
         } else {
             "UNAMBIGUOUS"
