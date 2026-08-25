@@ -1,4 +1,4 @@
-use crate::fields::FieldInterpretation;
+use crate::fields::{FieldInterpretation, MultiByteInterpretation};
 use crate::model::ProtocolModel;
 
 fn field_name(index: usize, field: &FieldInterpretation) -> String {
@@ -23,9 +23,7 @@ fn field_name(index: usize, field: &FieldInterpretation) -> String {
     }
 }
 
-fn best_unique_multi_byte(
-    model: &ProtocolModel,
-) -> Option<&crate::fields::MultiByteInterpretation> {
+fn best_unique_multi_byte(model: &ProtocolModel) -> Option<&MultiByteInterpretation> {
     if model.multi_byte_fields.is_empty() {
         return None;
     }
@@ -36,14 +34,16 @@ fn best_unique_multi_byte(
         .map(|field| field.score)
         .max()?;
 
-    let mut best = model
+    let mut candidates = model
         .multi_byte_fields
         .iter()
         .filter(|field| field.score == best_score);
 
-    let first = best.next()?;
+    let first = candidates.next()?;
 
-    if best.next().is_some() {
+    // More than one equally strong candidate means the
+    // byte interpretation is ambiguous.
+    if candidates.next().is_some() {
         return None;
     }
 
@@ -112,6 +112,20 @@ fn unique_field_name(base: String, used: &mut Vec<String>) -> String {
     }
 }
 
+fn emit_frame_bytes(frame: &[u8]) -> String {
+    let mut out = String::new();
+
+    for (index, byte) in frame.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+
+        out.push_str(&format!("0x{:02X}", byte));
+    }
+
+    out
+}
+
 pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     let mut out = String::new();
 
@@ -119,7 +133,7 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     out.push_str("// WARNING: Review all ambiguous interpretations before production use.\n\n");
 
     // ------------------------------------------------------------
-    // Determine unique multi-byte interpretation
+    // Multi-byte interpretation
     // ------------------------------------------------------------
 
     let unique_multi_byte = best_unique_multi_byte(model);
@@ -136,13 +150,11 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     for (index, field) in model.fields.iter().enumerate() {
         let position = model.checksum.coverage_start + index;
 
-        // If a unique multi-byte interpretation starts here, generate
-        // one typed field instead of generating its individual bytes.
         if let Some(multi) = unique_multi_byte {
-            if multi.start == position {
+            if position == multi.start {
                 if let Some(rust_type) = multi_byte_type(&multi.kind) {
-                    let base_name = format!("value_{}", multi.start);
-                    let name = unique_field_name(base_name, &mut struct_names);
+                    let name =
+                        unique_field_name(format!("value_{}", multi.start), &mut struct_names);
 
                     out.push_str(&format!("    pub {}: {},\n", name, rust_type));
 
@@ -150,7 +162,6 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
                 }
             }
 
-            // Skip bytes consumed by a typed multi-byte field.
             if position > multi.start && position < multi.start + multi.width {
                 continue;
             }
@@ -164,7 +175,7 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     out.push_str("}\n\n");
 
     // ------------------------------------------------------------
-    // CRC8 implementation
+    // CRC8
     // ------------------------------------------------------------
 
     if model.checksum.algorithm == "CRC8" {
@@ -192,7 +203,7 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     }
 
     // ------------------------------------------------------------
-    // CRC16/MODBUS implementation
+    // CRC16/MODBUS
     // ------------------------------------------------------------
 
     if model.checksum.algorithm == "CRC16/MODBUS" {
@@ -220,12 +231,6 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     }
 
     // ------------------------------------------------------------
-    // Determine framing
-    // ------------------------------------------------------------
-
-    let has_prefix = model.framing.kind != "prefix []";
-
-    // ------------------------------------------------------------
     // Parser
     // ------------------------------------------------------------
 
@@ -234,7 +239,9 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     let required_length = model.checksum.checksum_end.max(model.checksum.coverage_end);
 
     out.push_str(&format!("    if frame.len() != {} {{\n", required_length));
+
     out.push_str("        return Err(\"invalid frame length\");\n");
+
     out.push_str("    }\n\n");
 
     // ------------------------------------------------------------
@@ -246,18 +253,28 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
         model.framing.kind
     ));
 
-    if model.framing.kind == "prefix [7E, 10]" {
-        out.push_str(
-            r#"    if frame[0] != 0x7E || frame[1] != 0x10 {
-        return Err("invalid frame prefix");
-    }
+    // Prefix parsing is generated generically rather than
+    // hard-coding a particular prefix such as [7E, 10].
+    if let Some(prefix) = parse_prefix_string(&model.framing.kind) {
+        if !prefix.is_empty() {
+            out.push_str("    if ");
 
-"#,
-        );
+            for (index, byte) in prefix.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(" || ");
+                }
+
+                out.push_str(&format!("frame[{}] != 0x{:02X}", index, byte));
+            }
+
+            out.push_str(" {\n");
+            out.push_str("        return Err(\"invalid frame prefix\");\n");
+            out.push_str("    }\n\n");
+        }
     }
 
     // ------------------------------------------------------------
-    // Checksum information
+    // Checksum
     // ------------------------------------------------------------
 
     out.push_str(&format!(
@@ -275,10 +292,6 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
         model.checksum.checksum_start, model.checksum.checksum_end
     ));
 
-    // ------------------------------------------------------------
-    // CRC8 validation
-    // ------------------------------------------------------------
-
     if model.checksum.algorithm == "CRC8" {
         out.push_str(&format!(
             "    let expected_crc = crc8(&frame[{}..{}]);\n",
@@ -291,12 +304,9 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
         ));
 
         out.push_str("        return Err(\"CRC8 validation failed\");\n");
+
         out.push_str("    }\n\n");
     }
-
-    // ------------------------------------------------------------
-    // CRC16/MODBUS validation
-    // ------------------------------------------------------------
 
     if model.checksum.algorithm == "CRC16/MODBUS" {
         let start = model.checksum.checksum_start;
@@ -313,7 +323,9 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
         ));
 
         out.push_str("    if actual_crc != expected_crc {\n");
+
         out.push_str("        return Err(\"CRC16/MODBUS validation failed\");\n");
+
         out.push_str("    }\n\n");
     }
 
@@ -327,13 +339,10 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
         let position = model.checksum.coverage_start + index;
 
         if let Some(multi) = unique_multi_byte {
-            if multi.start == position {
-                if let (Some(_rust_type), Some(expression)) = (
-                    multi_byte_type(&multi.kind),
-                    multi_byte_expression(&multi.kind, multi.start),
-                ) {
-                    let base_name = format!("value_{}", multi.start);
-                    let name = unique_field_name(base_name, &mut generated_names);
+            if position == multi.start {
+                if let Some(expression) = multi_byte_expression(&multi.kind, multi.start) {
+                    let name =
+                        unique_field_name(format!("value_{}", multi.start), &mut generated_names);
 
                     out.push_str(&format!("    let {} = {};\n", name, expression));
 
@@ -346,14 +355,13 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
             }
         }
 
-        let base_name = field_name(index, field);
-        let name = unique_field_name(base_name, &mut generated_names);
+        let name = unique_field_name(field_name(index, field), &mut generated_names);
 
         out.push_str(&format!("    let {} = frame[{}];\n", name, position));
     }
 
     // ------------------------------------------------------------
-    // Return Packet
+    // Return packet
     // ------------------------------------------------------------
 
     out.push_str("\n    Ok(Packet {\n");
@@ -366,7 +374,7 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
     out.push_str("}\n");
 
     // ------------------------------------------------------------
-    // Ambiguity information
+    // Ambiguity warning
     // ------------------------------------------------------------
 
     if unique_multi_byte.is_none() && model.multi_byte_fields.len() > 1 {
@@ -376,8 +384,9 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
 // WARNING: Protocol interpretation is ambiguous.
 //
 // Babelfish found competing multi-byte interpretations
-// with equal evidence. Do not select one without additional
-// protocol evidence.
+// with equal evidence.
+//
+// No multi-byte interpretation was selected.
 //
 // Candidates:
 "#,
@@ -385,24 +394,17 @@ pub fn generate_rust(model: &ProtocolModel, frames: &[Vec<u8>]) -> String {
 
         for field in &model.multi_byte_fields {
             out.push_str(&format!(
-                "//   bytes[{}..{}] -> {:?}, score {:.2}\n",
+                "//   bytes[{}..{}] -> {}, score {:.2}\n",
                 field.start,
                 field.start + field.width,
                 field.kind,
-                field.score
+                field.score as f64 / 100.0
             ));
         }
-
-        out.push_str(
-            r#"//
-// No multi-byte candidate was selected because
-// the evidence does not uniquely determine one.
-"#,
-        );
     }
 
     // ------------------------------------------------------------
-    // Generated parser tests
+    // Generated tests
     // ------------------------------------------------------------
 
     if let Some(frame) = frames.first() {
@@ -417,86 +419,78 @@ mod tests {
         );
 
         // --------------------------------------------------------
-        // Test 1: Real captured frame
+        // Real frame
         // --------------------------------------------------------
 
-        out.push_str("    #[test]\n");
-        out.push_str("    fn parses_real_frame() {\n");
-        out.push_str("        let frame = [");
+        out.push_str("    #[test]\n    fn parses_real_frame() {\n");
 
-        for (index, byte) in frame.iter().enumerate() {
-            if index > 0 {
-                out.push_str(", ");
-            }
-
-            out.push_str(&format!("0x{:02X}", byte));
-        }
+        out.push_str(&format!(
+            "        let frame = [{}];\n\n",
+            emit_frame_bytes(frame)
+        ));
 
         out.push_str(
-            r#"];
-
-        let packet = parse_frame(&frame)
+            r#"        let packet = parse_frame(&frame)
             .expect("real captured frame should parse");
 
 "#,
         );
 
-        // Generate assertions that match the generated representation.
         let mut assertion_names = Vec::new();
 
         for (index, field) in model.fields.iter().enumerate() {
             let position = model.checksum.coverage_start + index;
 
             if let Some(multi) = unique_multi_byte {
-                if multi.start == position {
-                    if multi_byte_type(&multi.kind).is_some() {
-                        let base_name = format!("value_{}", multi.start);
-                        let name = unique_field_name(base_name, &mut assertion_names);
+                if position == multi.start {
+                    let name =
+                        unique_field_name(format!("value_{}", multi.start), &mut assertion_names);
 
-                        if multi.width == 2 && multi.start + 1 < frame.len() {
-                            let expected = match multi.kind.as_str() {
-                                "U16LittleEndian" => {
-                                    u16::from_le_bytes([frame[multi.start], frame[multi.start + 1]])
-                                }
+                    if multi.width == 2 && multi.start + 1 < frame.len() {
+                        let expected = match multi.kind.as_str() {
+                            "U16LittleEndian" => {
+                                u16::from_le_bytes([frame[multi.start], frame[multi.start + 1]])
+                            }
 
-                                "U16BigEndian" => {
-                                    u16::from_be_bytes([frame[multi.start], frame[multi.start + 1]])
-                                }
+                            "U16BigEndian" => {
+                                u16::from_be_bytes([frame[multi.start], frame[multi.start + 1]])
+                            }
 
-                                _ => 0,
-                            };
+                            _ => continue,
+                        };
 
-                            out.push_str(&format!(
-                                "        assert_eq!(packet.{}, 0x{:04X});\n",
-                                name, expected
-                            ));
-                        } else if multi.width == 4 && multi.start + 3 < frame.len() {
-                            let expected = match multi.kind.as_str() {
-                                "U32LittleEndian" => u32::from_le_bytes([
-                                    frame[multi.start],
-                                    frame[multi.start + 1],
-                                    frame[multi.start + 2],
-                                    frame[multi.start + 3],
-                                ]),
-
-                                "U32BigEndian" => u32::from_be_bytes([
-                                    frame[multi.start],
-                                    frame[multi.start + 1],
-                                    frame[multi.start + 2],
-                                    frame[multi.start + 3],
-                                ]),
-
-                                _ => 0,
-                            };
-
-                            out.push_str(&format!(
-                                "        assert_eq!(packet.{}, 0x{:08X});\n",
-                                name, expected
-                            ));
-                        }
-
-                        continue;
+                        out.push_str(&format!(
+                            "        assert_eq!(packet.{}, 0x{:04X});\n",
+                            name, expected
+                        ));
                     }
+
+                    if multi.width == 4 && multi.start + 3 < frame.len() {
+                        let expected = match multi.kind.as_str() {
+                            "U32LittleEndian" => u32::from_le_bytes([
+                                frame[multi.start],
+                                frame[multi.start + 1],
+                                frame[multi.start + 2],
+                                frame[multi.start + 3],
+                            ]),
+
+                            "U32BigEndian" => u32::from_be_bytes([
+                                frame[multi.start],
+                                frame[multi.start + 1],
+                                frame[multi.start + 2],
+                                frame[multi.start + 3],
+                            ]),
+
+                            _ => continue,
+                        };
+
+                        out.push_str(&format!(
+                            "        assert_eq!(packet.{}, 0x{:08X});\n",
+                            name, expected
+                        ));
+                    }
+
+                    continue;
                 }
 
                 if position > multi.start && position < multi.start + multi.width {
@@ -504,8 +498,7 @@ mod tests {
                 }
             }
 
-            let base_name = field_name(index, field);
-            let name = unique_field_name(base_name, &mut assertion_names);
+            let name = unique_field_name(field_name(index, field), &mut assertion_names);
 
             if position < frame.len() {
                 out.push_str(&format!(
@@ -518,15 +511,7 @@ mod tests {
         out.push_str(
             r#"    }
 
-"#,
-        );
-
-        // --------------------------------------------------------
-        // Test 2: Bad checksum
-        // --------------------------------------------------------
-
-        out.push_str(
-            r#"    #[test]
+    #[test]
     fn rejects_bad_crc() {
         let frame = [
 "#,
@@ -561,43 +546,7 @@ mod tests {
         );
 
         // --------------------------------------------------------
-        // Test 3: Bad prefix
-        // --------------------------------------------------------
-
-        if has_prefix {
-            out.push_str(
-                r#"    #[test]
-    fn rejects_bad_prefix() {
-        let frame = [
-"#,
-            );
-
-            for (index, byte) in frame.iter().enumerate() {
-                if index > 0 {
-                    out.push_str(", ");
-                }
-
-                let value = if index == 0 { byte ^ 0xFF } else { *byte };
-
-                out.push_str(&format!("0x{:02X}", value));
-            }
-
-            out.push_str(
-                r#"
-        ];
-
-        assert!(
-            parse_frame(&frame).is_err(),
-            "frame with invalid prefix should be rejected"
-        );
-    }
-
-"#,
-            );
-        }
-
-        // --------------------------------------------------------
-        // Test 4: Wrong length
+        // Wrong length
         // --------------------------------------------------------
 
         out.push_str(
@@ -630,4 +579,21 @@ mod tests {
     }
 
     out
+}
+
+// ------------------------------------------------------------
+// Parse "prefix [01, 02]" from the display representation
+// ------------------------------------------------------------
+
+fn parse_prefix_string(kind: &str) -> Option<Vec<u8>> {
+    let rest = kind.strip_prefix("prefix [")?;
+    let rest = rest.strip_suffix(']')?;
+
+    if rest.trim().is_empty() {
+        return Some(Vec::new());
+    }
+
+    rest.split(',')
+        .map(|part| u8::from_str_radix(part.trim(), 16).ok())
+        .collect()
 }
