@@ -78,7 +78,9 @@ impl FramingCandidate {
             && self.checksum_total_frames >= 100
         {
             "PROVEN"
-        } else if confidence >= 0.70 {
+        } else if self.checksum_validation_count == self.checksum_total_frames
+            && self.checksum_total_frames >= 3
+        {
             "LIKELY"
         } else if confidence >= 0.20 {
             "WEAK"
@@ -87,7 +89,6 @@ impl FramingCandidate {
         }
     }
 }
-
 pub fn rank_framing_candidates(mut candidates: Vec<FramingCandidate>) -> Vec<FramingCandidate> {
     candidates.sort_by(|a, b| {
         b.score()

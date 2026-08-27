@@ -19,7 +19,7 @@ impl ProtocolHypothesis {
     }
 
     pub fn verdict(&self) -> &'static str {
-        self.checksum.verdict()
+        self.framing.verdict()
     }
 
     pub fn field_evidence(&self) -> f64 {

@@ -1,5 +1,7 @@
 use babelfish::checksum::search::rank_candidates;
-use babelfish::framing::{FramingKind, best_framing_candidate};
+use babelfish::framing::{
+    FramingCandidate, FramingKind, infer_length_framing_candidates, rank_framing_candidates,
+};
 use babelfish::generator::generate_rust;
 use babelfish::input::{parse_hex_file, parse_hex_stream_file};
 use babelfish::model::ProtocolModel;
@@ -156,8 +158,35 @@ fn crack_stream_file(path: &str, json: bool) {
         }
     };
 
-    let framing = match best_framing_candidate(&stream, 1, 3) {
+    let mut framing_candidates = Vec::<FramingCandidate>::new();
+
+    // Search for length-field framing.
+    //
+    // Layout:
+    //   [length][payload...][checksum]
+    //
+    // The length field is searched in the first four positions.
+    for length_offset in 0..=3 {
+        let payload_offset = length_offset + 1;
+
+        framing_candidates.extend(infer_length_framing_candidates(
+            &stream,
+            length_offset,
+            length_offset,
+            payload_offset,
+            1,
+        ));
+    }
+
+    // Also consider normal prefix/sync framing.
+    framing_candidates.extend(babelfish::framing::build_framing_candidates(&stream, 1, 3));
+
+    let framing = match rank_framing_candidates(framing_candidates)
+        .into_iter()
+        .next()
+    {
         Some(candidate) => candidate,
+
         None => {
             eprintln!("Could not find a framing hypothesis.");
             process::exit(1);
@@ -165,6 +194,11 @@ fn crack_stream_file(path: &str, json: bool) {
     };
 
     let frames = frames_from_framing(&stream, &framing.kind);
+
+    if frames.is_empty() {
+        eprintln!("Could not recover any frames.");
+        process::exit(1);
+    }
 
     let hypothesis = match babelfish::hypothesis::build_hypothesis(framing.clone(), &frames) {
         Some(hypothesis) => hypothesis,
@@ -182,6 +216,7 @@ fn crack_stream_file(path: &str, json: bool) {
             Ok(output) => {
                 println!("{output}");
             }
+
             Err(error) => {
                 eprintln!("Could not serialize protocol model: {error}");
                 process::exit(1);
@@ -194,7 +229,6 @@ fn crack_stream_file(path: &str, json: bool) {
     println!("Babelfish 🐟");
     println!();
     println!("Raw stream bytes: {}", stream.len());
-    println!();
     println!();
 
     println!("Best framing candidate:");
@@ -216,168 +250,75 @@ fn crack_stream_file(path: &str, json: bool) {
         "  validation: {}/{} ({:.2}%)",
         framing.checksum_validation_count,
         framing.checksum_total_frames,
-        framing.checksum_validation_rate() * 100.0,
+        if framing.checksum_total_frames == 0 {
+            0.0
+        } else {
+            framing.checksum_validation_count as f64 / framing.checksum_total_frames as f64 * 100.0
+        }
     );
 
     println!("  confidence: {:.2}", framing.confidence());
-
     println!("  verdict: {}", framing.verdict());
 
     println!();
 
-    let hypothesis = match babelfish::hypothesis::build_hypothesis(framing, &frames) {
-        Some(hypothesis) => hypothesis,
-
-        None => {
-            eprintln!("Could not build a protocol hypothesis.");
-            process::exit(1);
-        }
-    };
-
-    if json {
-        match serde_json::to_string_pretty(&model) {
-            Ok(output) => {
-                println!("{output}");
-            }
-            Err(error) => {
-                eprintln!("Could not serialize protocol model: {error}");
-                process::exit(1);
-            }
-        }
-
-        return;
-    }
-
     println!("Protocol hypothesis:");
-
-    match &hypothesis.framing.kind {
-        FramingKind::Prefix(prefix) => {
-            println!("  framing: prefix {:02X?}", prefix);
-        }
-
-        FramingKind::Length {
-            length_offset,
-            payload_offset,
-            checksum_width,
-        } => {
-            println!("  framing: length byte {}", length_offset);
-            println!("  payload starts: byte {}", payload_offset);
-            println!("  checksum width: {} byte(s)", checksum_width);
-        }
-    }
-
+    print_framing_kind(&hypothesis.framing.kind);
     println!("  frames: {}", hypothesis.framing.frame_count);
-
     println!("  checksum: {}", hypothesis.checksum.algorithm.name());
-
     println!(
         "  coverage: bytes[{}..{}]",
         hypothesis.checksum.coverage_start, hypothesis.checksum.coverage_end
     );
-
     println!(
         "  checksum: bytes[{}..{}]",
         hypothesis.checksum.checksum_start, hypothesis.checksum.checksum_end
     );
-
     println!(
         "  validation: {}/{} ({:.2}%)",
         hypothesis.checksum.validation_count,
         hypothesis.checksum.total_frames,
-        hypothesis.validation_rate() * 100.0
+        hypothesis.checksum.validation_rate() * 100.0
     );
+    println!("  confidence: {:.2}", hypothesis.checksum.confidence());
+    println!("  verdict: {}", hypothesis.checksum.verdict());
 
-    println!("  confidence: {:.2}", hypothesis.confidence());
-
-    println!("  verdict: {}", hypothesis.verdict());
     println!();
+
     println!("Evidence:");
-
-    let report = &model.evidence;
-
-    for item in &report.items {
-        println!(
-            "  [{:<10}] {}  score: {:.2}",
-            item.category, item.statement, item.score
-        );
-    }
-
-    println!("Evidence strength: {:.2}", report.overall);
-
-    let ambiguous = hypothesis.ambiguous_multi_byte_fields();
-
     println!(
-        "Interpretation: {}",
-        if ambiguous.len() > 1 {
-            "AMBIGUOUS"
+        "  [Framing   ] {} frames recovered with consistent framing  score: {:.2}",
+        hypothesis.framing.frame_count,
+        if hypothesis.framing.frame_count > 0 {
+            1.0
         } else {
-            "UNAMBIGUOUS"
+            0.0
         }
     );
 
+    println!(
+        "  [Checksum  ] {} validates {}/{} frames  score: {:.2}",
+        hypothesis.checksum.algorithm.name(),
+        hypothesis.checksum.validation_count,
+        hypothesis.checksum.total_frames,
+        hypothesis.checksum.validation_rate()
+    );
+
+    for field in &hypothesis.fields {
+        println!("  [Field     ] byte {} → {:?}", field.position, field.kind);
+    }
+
     println!();
+
     println!("Fields:");
 
     for field in &hypothesis.fields {
         println!(
-            "  byte {:<3} {:<12} unique: {:<4} range: 0x{:02X}..0x{:02X}",
-            field.position,
-            format!("{:?}", field.kind),
-            field.unique_values,
-            field.min_value,
-            field.max_value,
+            "  byte {}   {:?}  unique: {}  range: 0x{:02X}..0x{:02X}",
+            field.position, field.kind, field.unique_values, field.min_value, field.max_value
         );
 
         println!("             interpretation: {:?}", field.interpretation());
-    }
-
-    if !hypothesis.multi_byte_fields.is_empty() {
-        println!();
-        println!("Multi-byte fields:");
-
-        for field in &hypothesis.multi_byte_fields {
-            println!(
-                "  bytes[{}..{}]  {:?}  unique: {:<4} range: {}..{}  incrementing: {}",
-                field.start,
-                field.start + field.width,
-                field.kind,
-                field.unique_values,
-                field.min_value,
-                field.max_value,
-                field.is_incrementing,
-            );
-        }
-
-        let ambiguous = hypothesis.ambiguous_multi_byte_fields();
-
-        if ambiguous.len() > 1 {
-            println!();
-            println!("Multi-byte interpretation:");
-
-            for (index, field) in ambiguous.iter().enumerate() {
-                let interpretation = field.interpretation();
-
-                println!();
-                println!("  Candidate {}:", index + 1);
-                println!(
-                    "    bytes[{}..{}]",
-                    interpretation.start,
-                    interpretation.start + interpretation.width
-                );
-                println!("    type: {}", interpretation.kind);
-                println!(
-                    "    range: {}..{}",
-                    interpretation.min_value, interpretation.max_value
-                );
-                println!("    incrementing: {}", interpretation.is_incrementing);
-                println!("    evidence: {:.2}", interpretation.score as f64 / 100.0);
-            }
-
-            println!();
-            println!("  Conclusion:");
-            println!("    Byte order cannot be determined from this capture.");
-            println!("    Both candidates explain the observed frames equally well.");
-        }
     }
 }
 
@@ -415,7 +356,6 @@ fn main() {
 
             crack_stream_file(&args[2], json);
         }
-
         "generate" => {
             if args.len() != 5 || args[3] != "--lang" {
                 print_usage();
@@ -428,13 +368,8 @@ fn main() {
                 process::exit(1);
             }
 
-            // `generate` operates on an already-framed hex capture:
-            //
-            //   01 00 00 0A 81 DF
-            //   01 01 03 0B 11 2F
-            //   ...
-            //
-            // parse_hex_file() preserves each line as a frame.
+            // `generate` operates on an already-framed capture.
+            // Each line is one complete frame.
             let frames = match parse_hex_file(&args[2]) {
                 Ok(frames) => frames,
                 Err(error) => {
@@ -448,10 +383,16 @@ fn main() {
                 process::exit(1);
             }
 
-            // These frames are already delimited by the input file.
-            // Do not run raw-stream framing detection here.
-            let framing = babelfish::framing::FramingCandidate {
-                kind: babelfish::framing::FramingKind::Prefix(Vec::new()),
+            // The capture already gives us frame boundaries.
+            //
+            // Do NOT blindly interpret byte 0 as a length field.
+            // The generator must preserve the fact that these are
+            // already-delimited frames.
+            //
+            // The checksum/field analysis is performed by the
+            // hypothesis builder.
+            let framing = FramingCandidate {
+                kind: FramingKind::Prefix(Vec::new()),
                 frame_count: frames.len(),
                 checksum_algorithm: None,
                 checksum_validation_count: 0,
@@ -467,11 +408,11 @@ fn main() {
             };
 
             let model = ProtocolModel::from_hypothesis(&hypothesis);
+
             let generated = generate_rust(&model, &frames);
 
             println!("{generated}");
         }
-
         _ => {
             eprintln!("Unknown command '{}'.", args[1]);
             eprintln!();
