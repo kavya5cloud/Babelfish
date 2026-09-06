@@ -369,7 +369,7 @@ fn explain_model(model: &ProtocolModel) {
     } else {
         for field in &model.protocol_fields {
             println!(
-                "  byte[{}..{}]  {:<16} {:<6} {}  confidence: {:.0}%",
+                "  byte[{}..{}]  {:<16} {:<6} {:<24} confidence: {:.0}%",
                 field.offset,
                 field.offset + field.width,
                 field.name,
