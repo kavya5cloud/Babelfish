@@ -383,10 +383,21 @@ fn explain_model(model: &ProtocolModel) {
     println!();
 
     println!("Evidence");
-    println!("--------");
-    println!("  evidence items: {}", model.evidence.items.len());
+println!("--------");
+println!("  evidence items: {}", model.evidence.items.len());
+println!("  overall evidence: {:.2}", model.evidence.overall);
+println!(
+    "  evidence strength: {:.2}",
+    model.evidence.evidence_strength
+);
+println!(
+    "  interpretation confidence: {:.2}",
+    model.evidence.interpretation_confidence
+);
+println!("  ambiguous: {}", model.evidence.ambiguous);
 
-    for item in &model.evidence.items {
+for item in &model.evidence.items {
+    
         println!(
             "  [{:<9}] score: {:.2}  {}",
             item.category, item.score, item.statement
