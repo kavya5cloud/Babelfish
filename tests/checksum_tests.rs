@@ -1559,6 +1559,28 @@ fn infers_length_field_hypothesis() {
     assert_eq!(hypothesis.min_value, 0x03);
     assert_eq!(hypothesis.max_value, 0x03);
 }
+
+#[test]
+fn scores_linear_field_evidence_as_strong() {
+    let frames = vec![
+        vec![0x10, 0x00],
+        vec![0x10, 0x03],
+        vec![0x10, 0x06],
+        vec![0x10, 0x09],
+    ];
+
+    let hypothesis =
+        babelfish::fields::infer_field_hypothesis(
+            &frames,
+            1,
+            3,
+        )
+        .expect("linear field hypothesis should exist");
+
+    let score = hypothesis.evidence_score(frames.len());
+
+    assert_eq!(score, 1.0);
+}
 #[test]
 fn decodes_u16_little_endian_values() {
     let frames = vec![
