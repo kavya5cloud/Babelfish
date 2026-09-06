@@ -321,6 +321,80 @@ fn crack_stream_file(path: &str, json: bool) {
         println!("             interpretation: {:?}", field.interpretation());
     }
 }
+fn explain_model(model: &ProtocolModel) {
+    println!("Babelfish 🐟");
+    println!();
+    println!("Protocol Explanation");
+    println!("====================");
+    println!();
+
+    println!("Frames");
+    println!("------");
+    println!("  detected: {}", model.framing.frame_count);
+    println!();
+
+    println!("Framing");
+    println!("-------");
+    println!("  {}", model.framing.kind);
+
+    if let Some(offset) = model.framing.length_offset {
+        println!("  length field: byte {}", offset);
+    }
+
+    if let Some(offset) = model.framing.payload_offset {
+        println!("  payload starts: byte {}", offset);
+    }
+
+    println!("  checksum width: {} byte(s)", model.framing.checksum_width);
+    println!();
+
+    println!("Checksum");
+    println!("--------");
+    println!("  algorithm: {}", model.checksum.algorithm);
+    println!(
+        "  coverage: bytes[{}..{}]",
+        model.checksum.coverage_start, model.checksum.coverage_end
+    );
+    println!(
+        "  checksum: bytes[{}..{}]",
+        model.checksum.checksum_start, model.checksum.checksum_end
+    );
+    println!();
+
+    println!("Fields");
+    println!("------");
+
+    if model.protocol_fields.is_empty() {
+        println!("  No protocol fields inferred.");
+    } else {
+        for field in &model.protocol_fields {
+            println!(
+                "  byte[{}..{}]  {:<16} {:<6} {}  confidence: {:.0}%",
+                field.offset,
+                field.offset + field.width,
+                field.name,
+                field.data_type,
+                field.interpretation,
+                field.confidence * 100.0
+            );
+        }
+    }
+
+    println!();
+
+    println!("Evidence");
+    println!("--------");
+    println!("  evidence items: {}", model.evidence.items.len());
+
+    if let Some(best) = model.evidence.items.iter().max_by(|a, b| {
+        a.score
+            .partial_cmp(&b.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    }) {
+        println!("  strongest evidence: {:.2}", best.score);
+        println!("  {}", best.statement);
+    }
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -329,7 +403,6 @@ fn main() {
         print_usage();
         process::exit(1);
     }
-
     match args[1].as_str() {
         "crack" => {
             if args.len() != 3 {
@@ -355,6 +428,45 @@ fn main() {
             }
 
             crack_stream_file(&args[2], json);
+        }
+        "explain" => {
+            if args.len() != 3 {
+                print_usage();
+                process::exit(1);
+            }
+
+            let frames = match parse_hex_file(&args[2]) {
+                Ok(frames) => frames,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    process::exit(1);
+                }
+            };
+
+            if frames.is_empty() {
+                eprintln!("No frames found.");
+                process::exit(1);
+            }
+
+            let framing = FramingCandidate {
+                kind: FramingKind::Prefix(Vec::new()),
+                frame_count: frames.len(),
+                checksum_algorithm: None,
+                checksum_validation_count: 0,
+                checksum_total_frames: frames.len(),
+            };
+
+            let hypothesis = match babelfish::hypothesis::build_hypothesis(framing, &frames) {
+                Some(hypothesis) => hypothesis,
+                None => {
+                    eprintln!("Could not build a protocol hypothesis.");
+                    process::exit(1);
+                }
+            };
+
+            let model = ProtocolModel::from_hypothesis(&hypothesis);
+
+            explain_model(&model);
         }
         "generate" => {
             if args.len() != 5 || args[3] != "--lang" {
@@ -423,8 +535,9 @@ fn main() {
 }
 
 fn print_usage() {
-    eprintln!("Usage:");
-    eprintln!("  babelfish crack <hex-file>");
-    eprintln!("  babelfish crack-stream <hex-stream-file> [--json]");
-    eprintln!("  babelfish generate <hex-file> --lang rust");
+    println!("Usage:");
+    println!("  babelfish crack <hex-file>");
+    println!("  babelfish crack-stream <hex-stream-file> [--json]");
+    println!("  babelfish generate <hex-file> --lang rust");
+    println!("  babelfish explain <hex-file>");
 }
