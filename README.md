@@ -577,7 +577,7 @@ Current baseline:
 ```text
 cargo test
 
-60 passed
+61 passed
 0 failed
 0 ignored
 ```
