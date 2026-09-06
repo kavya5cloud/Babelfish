@@ -126,31 +126,6 @@ fn parse_prefix_string(kind: &str) -> Option<Vec<u8>> {
 }
 
 // ------------------------------------------------------------
-// Parse:
-// "length byte 0, payload 1, checksum 1 byte(s)"
-// ------------------------------------------------------------
-
-fn parse_length_framing_string(kind: &str) -> Option<(usize, usize, usize)> {
-    let rest = kind.strip_prefix("length byte ")?;
-
-    let mut parts = rest.split(", payload ");
-
-    let length_offset = parts.next()?.trim().parse::<usize>().ok()?;
-
-    let rest = parts.next()?;
-
-    let mut parts = rest.split(", checksum ");
-
-    let payload_offset = parts.next()?.trim().parse::<usize>().ok()?;
-
-    let checksum_width_text = parts.next()?.strip_suffix(" byte(s)")?;
-
-    let checksum_width = checksum_width_text.trim().parse::<usize>().ok()?;
-
-    Some((length_offset, payload_offset, checksum_width))
-}
-
-// ------------------------------------------------------------
 // Generate length-field validation
 // ------------------------------------------------------------
 

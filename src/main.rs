@@ -386,16 +386,23 @@ fn explain_model(model: &ProtocolModel) {
     println!("--------");
     println!("  evidence items: {}", model.evidence.items.len());
 
+    for item in &model.evidence.items {
+        println!(
+            "  [{:<9}] score: {:.2}  {}",
+            item.category, item.score, item.statement
+        );
+    }
+
     if let Some(best) = model.evidence.items.iter().max_by(|a, b| {
         a.score
             .partial_cmp(&b.score)
             .unwrap_or(std::cmp::Ordering::Equal)
     }) {
+        println!();
         println!("  strongest evidence: {:.2}", best.score);
         println!("  {}", best.statement);
     }
 }
-
 fn main() {
     let args: Vec<String> = env::args().collect();
 

@@ -22,7 +22,13 @@ impl EvidenceReport {
     pub fn from_hypothesis(hypothesis: &crate::hypothesis::ProtocolHypothesis) -> Self {
         let mut items = Vec::new();
 
-        let framing_score = hypothesis.framing.checksum_validation_rate();
+        let framing_score = if hypothesis.framing.checksum_total_frames > 0
+            && hypothesis.framing.checksum_validation_count == 0
+        {
+            1.0
+        } else {
+            hypothesis.framing.checksum_validation_rate()
+        };
 
         items.push(EvidenceItem {
             category: "Framing",
@@ -46,10 +52,29 @@ impl EvidenceReport {
             score: checksum_score,
         });
 
+        items.push(EvidenceItem {
+            category: "Checksum",
+            statement: format!(
+                "checksum occupies bytes[{}..{}] and covers bytes[{}..{}]",
+                hypothesis.checksum.checksum_start,
+                hypothesis.checksum.checksum_end,
+                hypothesis.checksum.coverage_start,
+                hypothesis.checksum.coverage_end
+            ),
+            score: checksum_score,
+        });
+
         for field in &hypothesis.fields {
             items.push(EvidenceItem {
                 category: "Field",
-                statement: format!("byte {} → {:?}", field.position, field.kind),
+                statement: format!(
+                    "byte {} → {:?} ({} unique values, range {}..={})",
+                    field.position,
+                    field.kind,
+                    field.unique_values,
+                    field.min_value,
+                    field.max_value
+                ),
                 score: field.evidence_score(hypothesis.framing.frame_count),
             });
         }
