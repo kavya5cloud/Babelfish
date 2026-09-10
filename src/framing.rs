@@ -40,7 +40,8 @@ impl FramingCandidate {
             return 0.0;
         }
 
-        self.checksum_validation_count as f64 / self.checksum_total_frames as f64
+        self.checksum_validation_count as f64
+            / self.checksum_total_frames as f64
     }
 
     pub fn score(&self) -> f64 {
@@ -50,13 +51,13 @@ impl FramingCandidate {
             return 0.0;
         }
 
-        let evidence_factor = 1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+        let evidence_factor =
+            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
 
-        let validation_score = validation_rate * evidence_factor;
+        let complexity_penalty =
+            self.kind.complexity() as f64 * 0.01;
 
-        let complexity_penalty = self.kind.complexity() as f64 * 0.01;
-
-        validation_score - complexity_penalty
+        validation_rate * evidence_factor - complexity_penalty
     }
 
     pub fn confidence(&self) -> f64 {
@@ -66,7 +67,8 @@ impl FramingCandidate {
 
         let validation_rate = self.checksum_validation_rate();
 
-        let evidence_factor = 1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
+        let evidence_factor =
+            1.0 - (-((self.checksum_total_frames as f64) / 20.0)).exp();
 
         validation_rate * evidence_factor
     }
@@ -89,12 +91,17 @@ impl FramingCandidate {
         }
     }
 }
-pub fn rank_framing_candidates(mut candidates: Vec<FramingCandidate>) -> Vec<FramingCandidate> {
+
+pub fn rank_framing_candidates(
+    mut candidates: Vec<FramingCandidate>,
+) -> Vec<FramingCandidate> {
     candidates.sort_by(|a, b| {
         b.score()
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.kind.complexity().cmp(&b.kind.complexity()))
+            .then_with(|| {
+                a.kind.complexity().cmp(&b.kind.complexity())
+            })
             .then_with(|| b.frame_count.cmp(&a.frame_count))
     });
 
@@ -135,7 +142,9 @@ pub fn find_recurring_prefixes(
             }
         }
 
-        candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        candidates.sort_by(|a, b| {
+            b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0))
+        });
 
         for (sequence, _) in candidates {
             if !results.contains(&sequence) {
@@ -146,7 +155,11 @@ pub fn find_recurring_prefixes(
 
     results
 }
-pub fn split_on_prefix(stream: &[u8], prefix: &[u8]) -> Vec<Vec<u8>> {
+
+pub fn split_on_prefix(
+    stream: &[u8],
+    prefix: &[u8],
+) -> Vec<Vec<u8>> {
     if stream.is_empty() || prefix.is_empty() {
         return Vec::new();
     }
@@ -178,13 +191,17 @@ pub fn split_on_prefix(stream: &[u8], prefix: &[u8]) -> Vec<Vec<u8>> {
 
     frames
 }
+
 pub fn split_on_length_field(
     stream: &[u8],
     length_offset: usize,
     payload_offset: usize,
     checksum_width: usize,
 ) -> Vec<Vec<u8>> {
-    if stream.is_empty() || length_offset >= stream.len() || payload_offset > stream.len() {
+    if stream.is_empty()
+        || length_offset >= stream.len()
+        || payload_offset > stream.len()
+    {
         return Vec::new();
     }
 
@@ -198,13 +215,16 @@ pub fn split_on_length_field(
 
         let length = stream[position + length_offset] as usize;
 
-        let frame_len = (payload_offset - length_offset) + length + checksum_width;
+        let frame_len =
+            (payload_offset - length_offset) + length + checksum_width;
 
         if frame_len == 0 || position + frame_len > stream.len() {
             break;
         }
 
-        frames.push(stream[position..position + frame_len].to_vec());
+        frames.push(
+            stream[position..position + frame_len].to_vec()
+        );
 
         position += frame_len;
     }
@@ -217,7 +237,8 @@ pub fn build_framing_candidates(
     min_prefix_length: usize,
     max_prefix_length: usize,
 ) -> Vec<FramingCandidate> {
-    let prefixes = find_recurring_prefixes(stream, min_prefix_length, max_prefix_length);
+    let prefixes =
+        find_recurring_prefixes(stream, min_prefix_length, max_prefix_length);
 
     let mut candidates = Vec::new();
 
@@ -233,8 +254,11 @@ pub fn build_framing_candidates(
             candidates.push(FramingCandidate {
                 kind: FramingKind::Prefix(prefix.clone()),
                 frame_count: frames.len(),
-                checksum_algorithm: Some(checksum.algorithm.name().to_string()),
-                checksum_validation_count: checksum.validation_count,
+                checksum_algorithm: Some(
+                    checksum.algorithm.name().to_string(),
+                ),
+                checksum_validation_count:
+                    checksum.validation_count,
                 checksum_total_frames: checksum.total_frames,
             });
         }
@@ -244,10 +268,6 @@ pub fn build_framing_candidates(
         // fixed-width frames whose first byte(s) match the prefix and
         // whose widths evenly divide the stream.
         let prefix_len = prefix.len();
-
-        if stream.len() % 2 != 0 {
-            continue;
-        }
 
         for frame_len in (prefix_len + 1)..=stream.len() {
             if stream.len() % frame_len != 0 {
@@ -275,12 +295,56 @@ pub fn build_framing_candidates(
             candidates.push(FramingCandidate {
                 kind: FramingKind::Prefix(prefix.clone()),
                 frame_count: fixed_frames.len(),
-                checksum_algorithm: Some(checksum.algorithm.name().to_string()),
-                checksum_validation_count: checksum.validation_count,
+                checksum_algorithm: Some(
+                    checksum.algorithm.name().to_string(),
+                ),
+                checksum_validation_count:
+                    checksum.validation_count,
                 checksum_total_frames: checksum.total_frames,
             });
         }
     }
+
+    // When two actual stream candidates have identical full checksum
+    // evidence and one prefix is a strict extension of the other,
+    // prefer the longer prefix as the more specific boundary.
+    let mut remove_prefixes = Vec::new();
+
+    for candidate in &candidates {
+        let FramingKind::Prefix(prefix) = &candidate.kind else {
+            continue;
+        };
+
+        if candidate.checksum_validation_count
+            != candidate.checksum_total_frames
+        {
+            continue;
+        }
+
+        let has_stronger_extension = candidates.iter().any(|other| {
+            let FramingKind::Prefix(other_prefix) = &other.kind else {
+                return false;
+            };
+
+            other_prefix.len() > prefix.len()
+                && other_prefix.starts_with(prefix)
+                && other.frame_count == candidate.frame_count
+                && other.checksum_validation_count
+                    == other.checksum_total_frames
+                && other.checksum_total_frames
+                    == candidate.checksum_total_frames
+        });
+
+        if has_stronger_extension {
+            remove_prefixes.push(prefix.clone());
+        }
+    }
+
+    candidates.retain(|candidate| {
+        !remove_prefixes.iter().any(|prefix| {
+            candidate.kind == FramingKind::Prefix(prefix.clone())
+        })
+    });
 
     rank_framing_candidates(candidates)
 }
@@ -290,9 +354,13 @@ pub fn best_framing_candidate(
     min_prefix_length: usize,
     max_prefix_length: usize,
 ) -> Option<FramingCandidate> {
-    build_framing_candidates(stream, min_prefix_length, max_prefix_length)
-        .into_iter()
-        .next()
+    build_framing_candidates(
+        stream,
+        min_prefix_length,
+        max_prefix_length,
+    )
+    .into_iter()
+    .next()
 }
 
 pub fn infer_length_framing_candidates(
@@ -309,7 +377,12 @@ pub fn infer_length_framing_candidates(
     let mut candidates = Vec::new();
 
     for length_offset in min_length_offset..=max_length_offset {
-        let frames = split_on_length_field(stream, length_offset, payload_offset, checksum_width);
+        let frames = split_on_length_field(
+            stream,
+            length_offset,
+            payload_offset,
+            checksum_width,
+        );
 
         if frames.len() < 2 {
             continue;
@@ -326,8 +399,11 @@ pub fn infer_length_framing_candidates(
                 checksum_width,
             },
             frame_count: frames.len(),
-            checksum_algorithm: Some(checksum.algorithm.name().to_string()),
-            checksum_validation_count: checksum.validation_count,
+            checksum_algorithm: Some(
+                checksum.algorithm.name().to_string(),
+            ),
+            checksum_validation_count:
+                checksum.validation_count,
             checksum_total_frames: checksum.total_frames,
         });
     }

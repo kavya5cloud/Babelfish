@@ -1118,6 +1118,43 @@ let crc = Crc8;
 }   
 
 #[test]
+fn recovers_fixed_width_frames_when_prefix_appears_in_payload() {
+    let crc = Crc8;
+    let frames = vec![
+        vec![0x7E, 0x01, 0x7E, 0x03, 0x00],
+        vec![0x7E, 0x02, 0x10, 0x04, 0x00],
+        vec![0x7E, 0x03, 0x7E, 0x05, 0x00],
+    ];
+
+    let mut stream = Vec::new();
+
+    for mut frame in frames.clone() {
+        let checksum = crc.calculate(&frame[..4]) as u8;
+        frame[4] = checksum;
+        stream.extend_from_slice(&frame);
+    }
+
+    let candidates =
+        babelfish::framing::build_framing_candidates(
+            &stream,
+            1,
+            1,
+        );
+
+    let best = candidates
+        .first()
+        .expect("a framing candidate should exist");
+
+    assert_eq!(
+        best.kind,
+        FramingKind::Prefix(vec![0x7E])
+    );
+    assert_eq!(best.frame_count, 3);
+    assert_eq!(best.checksum_validation_count, 3);
+    assert_eq!(best.checksum_total_frames, 3);
+}
+
+#[test]
 fn parses_hex_stream_file() {
     use std::fs;
 
@@ -1933,6 +1970,7 @@ fn best_framing_candidate_handles_payload_sync_collision() {
             2,
         )
         .expect("framing candidate should exist");
+
 
     assert_eq!(
     best.kind,
