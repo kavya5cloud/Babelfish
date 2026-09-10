@@ -305,6 +305,35 @@ pub fn is_incrementing_u16(frames: &[Vec<u8>], position: usize, little_endian: b
         .windows(2)
         .all(|window| window[1] == window[0].wrapping_add(1))
 }
+pub fn detect_linear_u16(
+    frames: &[Vec<u8>],
+    position: usize,
+    little_endian: bool,
+) -> Option<i32> {
+    let values = if little_endian {
+        decode_u16_le(frames, position)?
+    } else {
+        decode_u16_be(frames, position)?
+    };
+
+    if values.len() < 3 {
+        return None;
+    }
+
+    let first = values[0] as i32;
+    let second = values[1] as i32;
+    let step = second - first;
+
+    for window in values.windows(2) {
+        let actual = window[1] as i32 - window[0] as i32;
+
+        if actual != step {
+            return None;
+        }
+    }
+
+    Some(step)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MultiByteKind {
@@ -348,18 +377,23 @@ pub fn infer_u16_field(frames: &[Vec<u8>], position: usize) -> Option<MultiByteF
     let le_values = decode_u16_le(frames, position)?;
 
     let be_values = decode_u16_be(frames, position)?;
-
     let le_incrementing = is_incrementing_u16(frames, position, true);
+let be_incrementing = is_incrementing_u16(frames, position, false);
 
-    let be_incrementing = is_incrementing_u16(frames, position, false);
+let le_linear = detect_linear_u16(frames, position, true);
+let be_linear = detect_linear_u16(frames, position, false);
 
-    let (kind, values, is_incrementing) = if le_incrementing {
-        (MultiByteKind::U16LittleEndian, le_values, true)
-    } else if be_incrementing {
-        (MultiByteKind::U16BigEndian, be_values, true)
-    } else {
-        return None;
-    };
+let (kind, values, is_incrementing) = if le_incrementing {
+    (MultiByteKind::U16LittleEndian, le_values, true)
+} else if be_incrementing {
+    (MultiByteKind::U16BigEndian, be_values, true)
+} else if le_linear.is_some() {
+    (MultiByteKind::U16LittleEndian, le_values, false)
+} else if be_linear.is_some() {
+    (MultiByteKind::U16BigEndian, be_values, false)
+} else {
+    return None;
+};
 
     let min_value = *values.iter().min()?;
 

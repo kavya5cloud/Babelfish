@@ -97,6 +97,7 @@ fn validates_multiple_crc16_modbus_frames() {
     assert_eq!(valid_count, 2);
 }
 
+
 #[test]
 fn validates_100_synthetic_frames() {
     let mut frames = Vec::new();
@@ -1655,6 +1656,25 @@ fn decodes_u16_little_endian_values() {
         )
     );
 }
+
+#[test]
+fn detects_linear_u16_little_endian_pattern() {
+    let frames = vec![
+        vec![0xE8, 0x03], // 1000
+        vec![0xED, 0x03], // 1005
+        vec![0xF2, 0x03], // 1010
+        vec![0xF7, 0x03], // 1015
+    ];
+
+    let step = babelfish::fields::detect_linear_u16(
+        &frames,
+        0,
+        true,
+    );
+
+    assert_eq!(step, Some(5));
+}
+
 #[test]
 fn infers_u16_little_endian_incrementing_field() {
     let frames = vec![
