@@ -612,46 +612,81 @@ pub fn detect_linear_u32(
 }
 
 
-pub fn infer_u32_field(frames: &[Vec<u8>], position: usize) -> Option<MultiByteFieldHypothesis> {
+pub fn infer_u32_field(
+    frames: &[Vec<u8>],
+    position: usize,
+) -> Option<MultiByteFieldHypothesis> {
     let le_values = decode_u32_le(frames, position)?;
     let be_values = decode_u32_be(frames, position)?;
 
+    let mut hypotheses = Vec::new();
+
     let le_incrementing = is_incrementing_u32(frames, position, true);
-let be_incrementing = is_incrementing_u32(frames, position, false);
+    let be_incrementing = is_incrementing_u32(frames, position, false);
 
-let le_linear = detect_linear_u32(frames, position, true);
-let be_linear = detect_linear_u32(frames, position, false);
+    let le_linear = detect_linear_u32(frames, position, true);
+    let be_linear = detect_linear_u32(frames, position, false);
 
-let (kind, values, is_incrementing) = if le_incrementing {
-    (MultiByteKind::U32LittleEndian, le_values, true)
-} else if be_incrementing {
-    (MultiByteKind::U32BigEndian, be_values, true)
-} else if le_linear.is_some() {
-    (MultiByteKind::U32LittleEndian, le_values, false)
-} else if be_linear.is_some() {
-    (MultiByteKind::U32BigEndian, be_values, false)
-} else {
-    return None;
-};
+    if le_incrementing {
+        if let Some(hypothesis) = build_u32_hypothesis(
+            position,
+            MultiByteKind::U32LittleEndian,
+            le_values.clone(),
+            true,
+        ) {
+            hypotheses.push(hypothesis);
+        }
+    } else if le_linear.is_some() {
+        if let Some(hypothesis) = build_u32_hypothesis(
+            position,
+            MultiByteKind::U32LittleEndian,
+            le_values.clone(),
+            false,
+        ) {
+            hypotheses.push(hypothesis);
+        }
+    }
 
-    let min_value = *values.iter().min()? as u64;
-    let max_value = *values.iter().max()? as u64;
+    if be_incrementing {
+        if let Some(hypothesis) = build_u32_hypothesis(
+            position,
+            MultiByteKind::U32BigEndian,
+            be_values.clone(),
+            true,
+        ) {
+            hypotheses.push(hypothesis);
+        }
+    } else if be_linear.is_some() {
+        if let Some(hypothesis) = build_u32_hypothesis(
+            position,
+            MultiByteKind::U32BigEndian,
+            be_values,
+            false,
+        ) {
+            hypotheses.push(hypothesis);
+        }
+    }
 
-    let unique_values = values
-        .iter()
-        .copied()
-        .collect::<std::collections::HashSet<_>>()
-        .len();
-
-    Some(MultiByteFieldHypothesis {
-        start: position,
-        width: 4,
-        kind,
-        unique_values,
-        min_value,
-        max_value,
-        is_incrementing,
-    })
+    hypotheses
+        .into_iter()
+        .max_by(|a, b| {
+            a.score()
+                .partial_cmp(&b.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    match (&a.kind, &b.kind) {
+                        (
+                            MultiByteKind::U32LittleEndian,
+                            MultiByteKind::U32BigEndian,
+                        ) => std::cmp::Ordering::Greater,
+                        (
+                            MultiByteKind::U32BigEndian,
+                            MultiByteKind::U32LittleEndian,
+                        ) => std::cmp::Ordering::Less,
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                })
+        })
 }
 pub fn infer_u32_fields(
     frames: &[Vec<u8>],
@@ -690,6 +725,32 @@ pub fn infer_u32_fields(
     });
 
     hypotheses
+}
+
+fn build_u32_hypothesis(
+    position: usize,
+    kind: MultiByteKind,
+    values: Vec<u32>,
+    is_incrementing: bool,
+) -> Option<MultiByteFieldHypothesis> {
+    let min_value = *values.iter().min()? as u64;
+    let max_value = *values.iter().max()? as u64;
+
+    let unique_values = values
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+
+    Some(MultiByteFieldHypothesis {
+        start: position,
+        width: 4,
+        kind,
+        unique_values,
+        min_value,
+        max_value,
+        is_incrementing,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
