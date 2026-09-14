@@ -7,7 +7,18 @@ use babelfish::{
     Sum8,
     Sum16,
 };
-use babelfish::framing::FramingKind;
+use babelfish::framing::{
+    FramingCandidate,
+    FramingKind,
+    rank_framing_candidates,
+};
+
+use babelfish::fields::{
+    MultiByteFieldHypothesis,
+    MultiByteFieldKind,
+    MultiByteKind,
+};
+
 
 #[test]
 fn crc16_modbus_known_value() {
@@ -1035,11 +1046,6 @@ fn framing_candidate_contains_checksum_evidence() {
 
 #[test]
 fn ranks_framing_candidates_by_checksum_evidence() {
-    use babelfish::framing::{
-        rank_framing_candidates,
-        FramingCandidate,
-        FramingKind,
-    };
 
     let weak = FramingCandidate {
         kind: FramingKind::Prefix(vec![0xAA]),
@@ -1718,6 +1724,7 @@ fn infers_u16_little_endian_incrementing_field() {
     assert!(hypothesis.is_incrementing);
 }
 
+
 #[test]
 fn infers_linear_u16_little_endian_field() {
     let frames = vec![
@@ -1747,24 +1754,26 @@ fn ranks_multi_byte_hypotheses() {
     };
 
     let strong = MultiByteFieldHypothesis {
-        start: 2,
-        width: 2,
-        kind: MultiByteKind::U16LittleEndian,
-        unique_values: 100,
-        min_value: 0,
-        max_value: 99,
-        is_incrementing: true,
-    };
+    start: 2,
+    width: 2,
+    kind: MultiByteKind::U16LittleEndian,
+    behavior: MultiByteFieldKind::Incrementing,
+    unique_values: 100,
+    min_value: 0,
+    max_value: 99,
+    is_incrementing: true,
+};
 
-    let weak = MultiByteFieldHypothesis {
-        start: 1,
-        width: 2,
-        kind: MultiByteKind::U16BigEndian,
-        unique_values: 1,
-        min_value: 4096,
-        max_value: 4096,
-        is_incrementing: false,
-    };
+let weak = MultiByteFieldHypothesis {
+    start: 1,
+    width: 2,
+    kind: MultiByteKind::U16BigEndian,
+    behavior: MultiByteFieldKind::Incrementing,
+    unique_values: 1,
+    min_value: 4096,
+    max_value: 4096,
+    is_incrementing: false,
+};
 
     assert!(strong.score() > weak.score());
 }
@@ -1825,7 +1834,29 @@ fn detects_linear_u32_little_endian_pattern() {
 
     assert_eq!(step, Some(5));
 }
+#[test]
+fn infers_linear_u32_little_endian_field() {
+    let frames = vec![
+        vec![0xE8, 0x03, 0x00, 0x00], // 1000
+        vec![0xED, 0x03, 0x00, 0x00], // 1005
+        vec![0xF2, 0x03, 0x00, 0x00], // 1010
+        vec![0xF7, 0x03, 0x00, 0x00], // 1015
+    ];
 
+    let hypothesis = babelfish::fields::infer_u32_field(&frames, 0)
+        .expect("expected linear U32 hypothesis");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::MultiByteKind::U32LittleEndian
+    );
+    assert_eq!(
+        hypothesis.behavior,
+        babelfish::fields::MultiByteFieldKind::Linear
+    );
+    assert_eq!(hypothesis.width, 4);
+    assert!(!hypothesis.is_incrementing);
+}
 #[test]
 fn decodes_u32_little_endian_values() {
     let frames = vec![

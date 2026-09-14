@@ -344,6 +344,12 @@ pub enum MultiByteKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MultiByteFieldKind {
+    Incrementing,
+    Linear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiByteFieldHypothesis {
     pub start: usize,
     pub width: usize,
@@ -352,6 +358,7 @@ pub struct MultiByteFieldHypothesis {
     pub min_value: u64,
     pub max_value: u64,
     pub is_incrementing: bool,
+    pub behavior: MultiByteFieldKind,
 }
 impl MultiByteFieldHypothesis {
     pub fn score(&self) -> f64 {
@@ -376,9 +383,10 @@ fn build_u16_hypothesis(
     position: usize,
     kind: MultiByteKind,
     values: Vec<u16>,
+    behavior: MultiByteFieldKind,
     is_incrementing: bool,
 ) -> Option<MultiByteFieldHypothesis> {
-        let min_value = *values.iter().min()?;
+    let min_value = *values.iter().min()?;
 
     let max_value = *values.iter().max()?;
 
@@ -392,12 +400,14 @@ fn build_u16_hypothesis(
         start: position,
         width: 2,
         kind,
+        behavior,
         unique_values,
         min_value: min_value as u64,
         max_value: max_value as u64,
         is_incrementing,
     })
 }
+
 pub fn infer_u16_field(
     frames: &[Vec<u8>],
     position: usize,
@@ -415,64 +425,68 @@ pub fn infer_u16_field(
 
     if le_incrementing {
         if let Some(hypothesis) = build_u16_hypothesis(
-            position,
-            MultiByteKind::U16LittleEndian,
-            le_values.clone(),
-            true,
-        ) {
+    position,
+    MultiByteKind::U16LittleEndian,
+    le_values.clone(),
+    MultiByteFieldKind::Incrementing,
+    true,
+) {
             hypotheses.push(hypothesis);
         }
     } else if le_linear.is_some() {
         if let Some(hypothesis) = build_u16_hypothesis(
-            position,
-            MultiByteKind::U16LittleEndian,
-            le_values.clone(),
-            false,
-        ) {
+    position,
+    MultiByteKind::U16LittleEndian,
+    le_values.clone(),
+    MultiByteFieldKind::Linear,
+    false,
+) {
             hypotheses.push(hypothesis);
         }
     }
 
     if be_incrementing {
         if let Some(hypothesis) = build_u16_hypothesis(
-            position,
-            MultiByteKind::U16BigEndian,
-            be_values.clone(),
-            true,
-        ) {
+    position,
+    MultiByteKind::U16BigEndian,
+    be_values.clone(),
+    MultiByteFieldKind::Incrementing,
+    true,
+) {
             hypotheses.push(hypothesis);
         }
     } else if be_linear.is_some() {
         if let Some(hypothesis) = build_u16_hypothesis(
-            position,
-            MultiByteKind::U16BigEndian,
-            be_values,
-            false,
-        ) {
+    position,
+    MultiByteKind::U16BigEndian,
+    be_values,
+    MultiByteFieldKind::Linear,
+    false,
+) {
             hypotheses.push(hypothesis);
         }
     }
 
-hypotheses
-    .into_iter()
-    .max_by(|a, b| {
-        a.score()
-            .partial_cmp(&b.score())
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| {
-                match (&a.kind, &b.kind) {
-                    (
-                        MultiByteKind::U16LittleEndian,
-                        MultiByteKind::U16BigEndian,
-                    ) => std::cmp::Ordering::Greater,
-                    (
-                        MultiByteKind::U16BigEndian,
-                        MultiByteKind::U16LittleEndian,
-                    ) => std::cmp::Ordering::Less,
-                    _ => std::cmp::Ordering::Equal,
-                }
-            })
-    })
+    hypotheses
+        .into_iter()
+        .max_by(|a, b| {
+            a.score()
+                .partial_cmp(&b.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    match (&a.kind, &b.kind) {
+                        (
+                            MultiByteKind::U16LittleEndian,
+                            MultiByteKind::U16BigEndian,
+                        ) => std::cmp::Ordering::Greater,
+                        (
+                            MultiByteKind::U16BigEndian,
+                            MultiByteKind::U16LittleEndian,
+                        ) => std::cmp::Ordering::Less,
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                })
+        })
 }
 
 pub fn infer_u16_fields(
@@ -632,6 +646,7 @@ pub fn infer_u32_field(
             position,
             MultiByteKind::U32LittleEndian,
             le_values.clone(),
+            MultiByteFieldKind::Incrementing,
             true,
         ) {
             hypotheses.push(hypothesis);
@@ -641,6 +656,7 @@ pub fn infer_u32_field(
             position,
             MultiByteKind::U32LittleEndian,
             le_values.clone(),
+            MultiByteFieldKind::Linear,
             false,
         ) {
             hypotheses.push(hypothesis);
@@ -652,6 +668,7 @@ pub fn infer_u32_field(
             position,
             MultiByteKind::U32BigEndian,
             be_values.clone(),
+            MultiByteFieldKind::Incrementing,
             true,
         ) {
             hypotheses.push(hypothesis);
@@ -661,6 +678,7 @@ pub fn infer_u32_field(
             position,
             MultiByteKind::U32BigEndian,
             be_values,
+            MultiByteFieldKind::Linear,
             false,
         ) {
             hypotheses.push(hypothesis);
@@ -731,6 +749,7 @@ fn build_u32_hypothesis(
     position: usize,
     kind: MultiByteKind,
     values: Vec<u32>,
+    behavior: MultiByteFieldKind,
     is_incrementing: bool,
 ) -> Option<MultiByteFieldHypothesis> {
     let min_value = *values.iter().min()? as u64;
@@ -743,14 +762,15 @@ fn build_u32_hypothesis(
         .len();
 
     Some(MultiByteFieldHypothesis {
-        start: position,
-        width: 4,
-        kind,
-        unique_values,
-        min_value,
-        max_value,
-        is_incrementing,
-    })
+    start: position,
+    width: 4,
+    kind,
+    behavior,
+    unique_values,
+    min_value,
+    max_value,
+    is_incrementing,
+})
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
