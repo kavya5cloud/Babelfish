@@ -1675,6 +1675,19 @@ fn detects_linear_u16_little_endian_pattern() {
     assert_eq!(step, Some(5));
 }
 
+#[test]
+fn does_not_infer_u16_field_from_irregular_values() {
+    let frames = vec![
+        vec![0xE8, 0x03], // 1000
+        vec![0xD2, 0x04], // 1234
+        vec![0xB8, 0x0B], // 3000
+        vec![0x39, 0x30], // 12345
+    ];
+
+    let hypothesis = babelfish::fields::infer_u16_field(&frames, 0);
+
+    assert!(hypothesis.is_none());
+}
 
 #[test]
 fn infers_u16_little_endian_incrementing_field() {
