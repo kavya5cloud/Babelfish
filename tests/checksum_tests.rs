@@ -1675,6 +1675,7 @@ fn detects_linear_u16_little_endian_pattern() {
     assert_eq!(step, Some(5));
 }
 
+
 #[test]
 fn infers_u16_little_endian_incrementing_field() {
     let frames = vec![
@@ -1703,6 +1704,27 @@ fn infers_u16_little_endian_incrementing_field() {
     assert_eq!(hypothesis.max_value, 3);
     assert!(hypothesis.is_incrementing);
 }
+
+#[test]
+fn infers_linear_u16_little_endian_field() {
+    let frames = vec![
+        vec![0xE8, 0x03], // 1000
+        vec![0xED, 0x03], // 1005
+        vec![0xF2, 0x03], // 1010
+        vec![0xF7, 0x03], // 1015
+    ];
+
+    let hypothesis = babelfish::fields::infer_u16_field(&frames, 0)
+        .expect("expected linear U16 hypothesis");
+
+    assert_eq!(
+        hypothesis.kind,
+        babelfish::fields::MultiByteKind::U16LittleEndian
+    );
+    assert_eq!(hypothesis.width, 2);
+    assert!(!hypothesis.is_incrementing);
+}
+
 
 #[test]
 fn ranks_multi_byte_hypotheses() {
