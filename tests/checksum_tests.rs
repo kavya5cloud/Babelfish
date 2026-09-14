@@ -1796,6 +1796,24 @@ fn ranks_overlapping_u16_hypotheses() {
     );
 }
 #[test]
+fn detects_linear_u32_little_endian_pattern() {
+    let frames = vec![
+        vec![0xE8, 0x03, 0x00, 0x00], // 1000
+        vec![0xED, 0x03, 0x00, 0x00], // 1005
+        vec![0xF2, 0x03, 0x00, 0x00], // 1010
+        vec![0xF7, 0x03, 0x00, 0x00], // 1015
+    ];
+
+    let step = babelfish::fields::detect_linear_u32(
+        &frames,
+        0,
+        true,
+    );
+
+    assert_eq!(step, Some(5));
+}
+
+#[test]
 fn decodes_u32_little_endian_values() {
     let frames = vec![
         vec![0xAA, 0x00, 0x00, 0x00, 0x00],

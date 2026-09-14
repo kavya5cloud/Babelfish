@@ -520,21 +520,59 @@ pub fn is_incrementing_u32(frames: &[Vec<u8>], position: usize, little_endian: b
         .windows(2)
         .all(|window| window[1] == window[0].wrapping_add(1))
 }
+
+pub fn detect_linear_u32(
+    frames: &[Vec<u8>],
+    position: usize,
+    little_endian: bool,
+) -> Option<i64> {
+    let values = if little_endian {
+        decode_u32_le(frames, position)?
+    } else {
+        decode_u32_be(frames, position)?
+    };
+
+    if values.len() < 3 {
+        return None;
+    }
+
+    let first = values[0] as i64;
+    let second = values[1] as i64;
+    let step = second - first;
+
+    for window in values.windows(2) {
+        let actual = window[1] as i64 - window[0] as i64;
+
+        if actual != step {
+            return None;
+        }
+    }
+
+    Some(step)
+}
+
+
 pub fn infer_u32_field(frames: &[Vec<u8>], position: usize) -> Option<MultiByteFieldHypothesis> {
     let le_values = decode_u32_le(frames, position)?;
     let be_values = decode_u32_be(frames, position)?;
 
     let le_incrementing = is_incrementing_u32(frames, position, true);
+let be_incrementing = is_incrementing_u32(frames, position, false);
 
-    let be_incrementing = is_incrementing_u32(frames, position, false);
+let le_linear = detect_linear_u32(frames, position, true);
+let be_linear = detect_linear_u32(frames, position, false);
 
-    let (kind, values, is_incrementing) = if le_incrementing {
-        (MultiByteKind::U32LittleEndian, le_values, true)
-    } else if be_incrementing {
-        (MultiByteKind::U32BigEndian, be_values, true)
-    } else {
-        return None;
-    };
+let (kind, values, is_incrementing) = if le_incrementing {
+    (MultiByteKind::U32LittleEndian, le_values, true)
+} else if be_incrementing {
+    (MultiByteKind::U32BigEndian, be_values, true)
+} else if le_linear.is_some() {
+    (MultiByteKind::U32LittleEndian, le_values, false)
+} else if be_linear.is_some() {
+    (MultiByteKind::U32BigEndian, be_values, false)
+} else {
+    return None;
+};
 
     let min_value = *values.iter().min()? as u64;
     let max_value = *values.iter().max()? as u64;
