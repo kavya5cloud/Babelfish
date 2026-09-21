@@ -5,7 +5,7 @@
 > **Automated reverse engineering for undocumented binary protocols.**
 
 Turn raw hexadecimal captures into an **evidence-backed protocol hypothesis**, explain what Babelfish discovered, and generate a Rust parser from the inferred model.
-
+ 
 ```text
         UNDOCUMENTED BINARY CAPTURE
                     │
